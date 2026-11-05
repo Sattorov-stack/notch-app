@@ -1,151 +1,111 @@
-# Чёлка (NotchApp) для macOS 15+
+# NotchApp for macOS 15+
 
-Меню живёт под чёлкой: навёл мышь — раскрылось, увёл — закрылось. Тёмное стекло,
-**два боковых рейла** разделов (слева — главное, справа — остальное), у каждого
-раздела своя высота — панель не держит лишнее место (Главная 600×320, Музыка 600×280,
-Питомцы 600×340). Каждый раздел можно вынести в отдельное окно кнопкой «окно» в
-шапке (или из меню в строке состояния).
+A menu that lives under the MacBook notch: hover to open it, move the mouse away to close it. Dark glass look, **two side rails** of sections (main on the left, everything else on the right), and each section has its own height, so the panel never takes more space than needed (Home 600×320, Music 600×280, Pets 600×340). Any section can be detached into its own window with the "window" button in the header or from the menu bar.
 
-## Что внутри
+## Features
 
-| Раздел | Что делает |
+| Section | What it does |
 |---|---|
-| **Главная** | Музыка, ближайшие события, питомцы и лимиты, буфер и полка — одним взглядом |
-| **Музыка** | Music, Spotify и «Яндекс Музыка» через AppleScript, **YouTube в Chrome/Safari/Firefox**, локальные видео в **QuickTime**, системное «Сейчас играет» (MediaRemote): обложка, прогресс, play/pause, ±10 с |
-| **Заметки** | Несколько заметок: список слева, «Добавить заметку», удаление, автосохранение. Без автоисправлений, подчёркиваний, умных кавычек, замен и Writing Tools |
-| **Сценарий** | Суфлёр отдельным окном под чёлкой; пауза при наведении мыши. И суфлёр, и сама чёлка скрыты от записи и демонстрации экрана (`sharingType = .none`) |
-| **Переводчик** | Офлайн-перевод Apple. Язык источника определяется локально (NaturalLanguage), поэтому нет системного запроса «выберите язык»; перевод через одну сессию без лишних диалогов |
-| **Распознать текст** | Скриншот (сразу или через 3/5 с), картинка из буфера, перетащенная картинка, голос, аудио/видео → текст. Vision + Speech на устройстве, результат сразу в буфере |
-| **Буфер обмена** | Текст **и картинки** (превью, копирование обратно), поиск, закрепление, удаление. Максимум 40 записей: 41-я вытесняет самую старую (закреплённые остаются). Пароли и transient-данные не сохраняются |
-| **Полка** | Перетащи файл в чёлку — он останется; открыть, показать в Finder, убрать |
-| **Календарь** | События из Календаря macOS, сетка месяца и список на день |
-| **Питомцы и лимиты** | Питомцы всех найденных ИИ-приложений; у каждой плитки статус и свой процент лимита (или «лимит —»), **нажми на плитку — задать лимит вручную**, «+» — добавить своего агента, расход Claude Code |
-| **Инструменты** | Выключение клавиатуры для протирания, «не засыпать», работа с закрытой крышкой, автозапуск |
+| **Home** | Music, upcoming events, pets and limits, clipboard and shelf at a glance |
+| **Music** | Apple Music, Spotify and Yandex Music via AppleScript, **YouTube in Chrome/Safari/Firefox**, local videos in **QuickTime**, and system Now Playing (MediaRemote): artwork, progress, play/pause, ±10 s |
+| **Notes** | Multiple notes with a sidebar list, add and delete, autosave. No autocorrect, underlines, smart quotes, substitutions or Writing Tools |
+| **Script** | A teleprompter window under the notch that pauses on hover. Both the teleprompter and the notch are hidden from screen recording and sharing (`sharingType = .none`) |
+| **Translate** | Offline Apple translation. The source language is detected locally (NaturalLanguage), so there is no "choose a language" prompt, and one session is reused without extra dialogs |
+| **Recognize text** | Screenshot (immediately or after 3/5 s), clipboard image, dropped image, voice, or audio/video to text. Vision and Speech run on device; the result goes straight to the clipboard |
+| **Clipboard** | Text **and images** (preview, copy back), search, pin, delete. Up to 40 items: the 41st replaces the oldest (pinned items stay). Passwords and transient data are never stored |
+| **Shelf** | Drop a file onto the notch to keep it there; open it, reveal it in Finder, or remove it |
+| **Calendar** | Events from macOS Calendar, a month grid and a day list |
+| **Pets and limits** | Pets for every AI app found on the Mac. Each tile shows a status and its own usage limit; **click a tile to set the limit manually**, use "+" to add your own agent, and see Claude Code usage |
+| **Tools** | Lock the keyboard for cleaning, keep awake, run with the lid closed, launch at login |
 
-## Сборка
+## Building
 
 ```bash
 cd NotchApp
 ./build_app.sh
 ```
 
-Нужен Xcode или Command Line Tools (`xcode-select --install`). Скрипт соберёт
-`NotchApp.app`, подпишет ad-hoc и запустит. Если macOS ругается на права —
-см. таблицу ниже.
+Requires Xcode or Command Line Tools (`xcode-select --install`). The script builds `NotchApp.app`, signs it ad hoc and launches it. If macOS complains about permissions, see the table below.
 
-Особенности сборки:
+Build notes:
 
-- `Package.swift` использует `.macOS("15.0")` (строковая форма) — она работает и со
-  `swift-tools-version:5.9`, в отличие от `.v15`.
-- `swift build --disable-sandbox`: SwiftPM не может запустить свой sandbox внутри
-  внешней песочницы (иначе `sandbox-exec: sandbox_apply: Operation not permitted`).
-- `build_app.sh` исполняемый; если переносишь проект — `chmod +x build_app.sh`.
+- `Package.swift` uses `.macOS("15.0")` (the string form), which works with `swift-tools-version:5.9`, unlike `.v15`.
+- `swift build --disable-sandbox`: SwiftPM cannot start its own sandbox inside another sandbox (otherwise you get `sandbox-exec: sandbox_apply: Operation not permitted`).
+- `build_app.sh` must be executable; if you move the project, run `chmod +x build_app.sh`.
 
-## Разрешения
+## Permissions
 
-| Функция | Разрешение |
+| Feature | Permission |
 |---|---|
-| Выключение клавиатуры | Универсальный доступ |
-| Скриншот → текст | Запись экрана |
-| Голос → текст | Микрофон, Распознавание речи |
-| Календарь | Календари |
-| Музыка и QuickTime | Автоматизация (Music, Spotify, QuickTime Player) |
-| YouTube во вкладке | Автоматизация (Google Chrome, Safari, Firefox) |
+| Keyboard lock | Accessibility |
+| Screenshot to text | Screen Recording |
+| Voice to text | Microphone, Speech Recognition |
+| Calendar | Calendars |
+| Music and QuickTime | Automation (Music, Spotify, QuickTime Player) |
+| YouTube in a browser tab | Automation (Google Chrome, Safari, Firefox) |
 
-После пересборки macOS может забыть «Универсальный доступ»: удали NotchApp из
-списка и добавь снова.
+After a rebuild macOS may forget the Accessibility permission: remove NotchApp from the list and add it again.
 
-## Питомцы и ИИ-агенты
+## Pets and AI agents
 
-Приложение слушает только `127.0.0.1:47321`. При старте оно само находит
-установленные ИИ-приложения (/Applications, ~/Applications), их CLI-папки
-(`~/.claude`, `~/.codex`, `~/.gemini`, `~/.cursor`, `~/.copilot`, `~/.kimi`,
-`~/.deepseek`, `~/.manus`, `~/.opencode`) и запущенные приложения.
+The app listens only on `127.0.0.1:47321`. On launch it finds installed AI apps (/Applications, ~/Applications), their CLI folders (`~/.claude`, `~/.codex`, `~/.gemini`, `~/.cursor`, `~/.copilot`, `~/.kimi`, `~/.deepseek`, `~/.manus`, `~/.opencode`) and running apps.
 
-Сейчас находятся: **DeepSeek Harness**, Claude, OpenCode, Koda Code, ChatGPT, Codex,
-Cursor, Gemini, Copilot, Grok, DeepSeek, Kimi, Manus (и добавляются Perplexity,
-Windsurf, Warp, Raycast, Poe, Mistral, Qwen, Ollama, LM Studio, если установлены).
-Каталог пополняется по имени приложения и bundle id, а не только по названию.
-Своего агента можно добавить вручную — он сохранится между запусками.
+Currently detected: **DeepSeek Harness**, Claude, OpenCode, Koda Code, ChatGPT, Codex, Cursor, Gemini, Copilot, Grok, DeepSeek, Kimi, Manus (plus Perplexity, Windsurf, Warp, Raycast, Poe, Mistral, Qwen, Ollama and LM Studio if installed). Detection uses both the app name and the bundle ID. You can also add your own agent manually; it is saved between launches.
 
-Плитка показывает «онлайн», если приложение запущено, и событие агента
-(«Готово», «Нужно разрешение», «Сбой»), если агент прислал его через `/event`.
-Именно поэтому в питомцах виден и DeepSeek Harness: он запущен, значит «онлайн»;
-чтобы он писал «готово», нужен хук, который дёргает `/event`.
+A tile shows "online" when the app is running, and an agent event ("Done", "Needs permission", "Failed") when the agent sends one to `/event`. That is why DeepSeek Harness appears as a pet: it is running, so it is "online". For it to report "done", you need a hook that calls `/event`.
 
-Питомец выбирается правым кликом по плитке; там же — ручной лимит и тестовое
-уведомление.
+Right-click a tile to pick a pet, set a manual limit, or send a test notification.
 
-**Готово / разрешение / сбой:**
+**Done / permission / error:**
 
 ```bash
-hooks/notch-notify.sh codex done "собрал проект"
+hooks/notch-notify.sh codex done "project built"
 hooks/notch-notify.sh cursor permission
-hooks/notch-notify.sh myscript error "упал деплой"
+hooks/notch-notify.sh myscript error "deploy failed"
 
 curl -X POST 127.0.0.1:47321/event \
-  -d '{"agent":"claude","event":"done","message":"готово","pet":"🦊"}'
+  -d '{"agent":"claude","event":"done","message":"done","pet":"🦊"}'
 ```
 
-**Лимит в процентах** (агент присылает сам):
+**Usage limit in percent** (sent by the agent):
 
 ```bash
 curl -X POST 127.0.0.1:47321/event \
-  -d '{"agent":"codex","remaining":64,"label":"5-часовое окно"}'
+  -d '{"agent":"codex","remaining":64,"label":"5-hour window"}'
 ```
 
-**Диагностика и управление:**
+**Diagnostics and control:**
 
 ```bash
-curl 127.0.0.1:47321/health          # сервер жив?
-curl 127.0.0.1:47321/state           # раскрыта ли чёлка, агенты, лимиты, что играет
-curl 127.0.0.1:47321/browser         # что видно в активной вкладке Chrome/Safari
-curl 127.0.0.1:47321/ax              # разрешение на автоматизацию и Accessibility
-curl 127.0.0.1:47321/music           # принудительно обновить «Сейчас играет»
-curl -X POST 127.0.0.1:47321/open -d '{"tab":"pets"}'   # открыть раздел окном
+curl 127.0.0.1:47321/health          # is the server alive?
+curl 127.0.0.1:47321/state           # notch open?, agents, limits, now playing
+curl 127.0.0.1:47321/browser         # what the active Chrome/Safari tab shows
+curl 127.0.0.1:47321/ax              # Automation and Accessibility permissions
+curl 127.0.0.1:47321/music           # force-refresh Now Playing
+curl -X POST 127.0.0.1:47321/open -d '{"tab":"pets"}'   # open a section in a window
 ```
 
-Разделы для `/open`: `home`, `music`, `notes`, `script`, `translate`,
-`recognize`, `clipboard`, `shelf`, `calendar`, `pets`, `tools`.
+Sections for `/open`: `home`, `music`, `notes`, `script`, `translate`, `recognize`, `clipboard`, `shelf`, `calendar`, `pets`, `tools`.
 
 ### Claude Code
 
-Добавь в `~/.claude/settings.json` содержимое `hooks/claude-settings-example.json`
-(поправь путь к `notch-notify.sh`). Claude будет присылать «готово» и «нужно
-разрешение». Расход токенов за 5 часов приложение считает само по локальным
-логам `~/.claude/projects` — приблизительно, без сети.
+Add the contents of `hooks/claude-settings-example.json` to `~/.claude/settings.json` (fix the path to `notch-notify.sh`). Claude will then send "done" and "needs permission" events. The app estimates 5-hour token usage on its own from local logs in `~/.claude/projects`, roughly and without any network access.
 
-## Клавиатура и сон
+## Keyboard and sleep
 
-- **Протереть клавиатуру** — блокирует клавиши на 30 с / 1 / 2 / 5 мин, снимается
-  по таймеру сама. Трекпад можно оставить включённым, чтобы нажать «Включить».
-  Кнопку питания и Touch ID программно отключить нельзя.
-- Ввод в чёлке: клик по полю делает панель ключевой без активации приложения —
-  работают ⌘V, стрелки и обычный набор; кнопка «Вставить» тоже есть.
-- **Не засыпать** — `IOPMAssertion` при открытой крышке.
-- **Закрытая крышка** — `pmset -a disablesleep 1` (нужен пароль администратора).
-  При выходе из приложения сон возвращается; macOS может спросить пароль ещё раз.
-  Не оставляй ноутбук в сумке: он будет греться.
+- **Clean the keyboard**: locks keys for 30 s / 1 / 2 / 5 min and unlocks automatically. The trackpad can stay enabled so you can click "Unlock". The power button and Touch ID cannot be disabled by software.
+- Typing in the notch: clicking a field makes the panel key without activating the app, so ⌘V, arrow keys and normal typing work; there is also a "Paste" button.
+- **Keep awake**: an `IOPMAssertion` while the lid is open.
+- **Lid closed**: `pmset -a disablesleep 1` (requires an admin password). Sleep is restored when the app quits; macOS may ask for the password again. Don't leave the laptop in a bag, it will heat up.
 
-## Ограничения
+## Limitations
 
-- Единого API лимитов у ИИ-сервисов нет: приложение показывает то, что агент
-  прислал через `/event`, плюс приблизительный подсчёт токенов Claude Code.
-- Видео из браузера видно по системному «Сейчас играет» или по заголовку окна:
-  Chrome/Safari — активная вкладка, Firefox — любое окно с YouTube. Нужно разрешить
-  автоматизацию браузера (системный запрос при первом обращении). Найденный трек
-  кешируется, поэтому он не мигает между проверками.
-- Кнопки в браузере работают через JavaScript из Apple Events: в Chrome включи
-  View → Developer → Allow JavaScript from Apple Events, в Safari — Develop →
-  Allow JavaScript from Apple Events. В Firefox управление недоступно (нет API),
-  только показ трека. Круглые видео из Telegram не определяются: у Telegram нет
-  доступа к текущему видео, а заголовок окна — это имя чата.
-- Вся чёлка (вместе с суфлёром) скрыта от записи экрана через
-  `sharingType = .none`; некоторые программы для созвонов всё равно захватывают
-  экран в обход — проверь в своей программе.
-- Первый запуск сборки из терминала может потребовать разрешений macOS на
-  автоматизацию/микрофон — они спрашиваются по факту использования.
+- AI services have no common limits API: the app shows what agents send to `/event`, plus an approximate Claude Code token count.
+- Browser video is detected via system Now Playing or the window title: the active tab in Chrome/Safari, or any window with YouTube in Firefox. Browser automation must be allowed (macOS asks on first use). The detected track is cached so it doesn't flicker between checks.
+- Browser controls use JavaScript from Apple Events. In Chrome enable View → Developer → Allow JavaScript from Apple Events; in Safari, Develop → Allow JavaScript from Apple Events. Firefox has no API, so only the track is shown. Telegram round videos are not detected: Telegram doesn't expose the current video, and the window title is the chat name.
+- The whole notch (including the teleprompter) is hidden from screen recording with `sharingType = .none`, but some video-call apps capture the screen another way, so check yours.
+- The first launch of a terminal build may ask for macOS Automation or Microphone permissions; they are requested on first use.
 
-## Лицензия
+## License
 
 [MIT](LICENSE) © 2026 Bakhtiyor Sattorov
