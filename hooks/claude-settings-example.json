@@ -1,0 +1,10 @@
+{
+  "hooks": {
+    "Stop": [
+      { "hooks": [ { "type": "command", "command": "/Users/bahtiersattorov/Downloads/NotchApp/hooks/notch-notify.sh claude done" } ] }
+    ],
+    "Notification": [
+      { "hooks": [ { "type": "command", "command": "/Users/bahtiersattorov/Downloads/NotchApp/hooks/notch-notify.sh claude permission" } ] }
+    ]
+  }
+}
