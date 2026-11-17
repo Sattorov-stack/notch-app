@@ -343,6 +343,11 @@ final class NotchController: NSObject {
 
 // MARK: - Запуск
 
+// Самопроверка проверки интернета: NotchApp --selftest-net [--live]
+if CommandLine.arguments.contains("--selftest-net") {
+    exit(NetSelfTest.run() ? 0 : 1)
+}
+
 // Самопроверка переводчика: NotchApp --selftest-translate
 if CommandLine.arguments.contains("--selftest-translate") || CommandLine.arguments.contains("--selftest-ai") {
     Task {

@@ -87,7 +87,7 @@ enum Tab: String, CaseIterable, Identifiable {
         case .clipboard: return "История копирований с поиском и закреплением"
         case .shelf: return "Перетащи файл в чёлку — он останется здесь"
         case .calendar: return "События из Календаря macOS"
-        case .system: return "Процессор, память, батарея и диск"
+        case .system: return "Процессор, память, батарея, диск и интернет"
         case .pets: return "Питомцы ИИ-агентов и остатки лимитов"
         case .windows: return "Раскладки окон: потяни окно к чёлке · ⌃⌥←→↑↓"
         case .tools: return "Клавиатура, сон, автозапуск · ⌃⌥N — меню"
@@ -108,7 +108,7 @@ enum Tab: String, CaseIterable, Identifiable {
         case .clipboard: return 310
         case .shelf: return 278
         case .calendar: return 340
-        case .system: return 300
+        case .system: return 336
         case .pets: return 340
         case .windows: return 322
         case .tools: return 302
@@ -128,7 +128,7 @@ enum Tab: String, CaseIterable, Identifiable {
         case .clipboard: return CGSize(width: 520, height: 620)
         case .shelf: return CGSize(width: 640, height: 440)
         case .calendar: return CGSize(width: 680, height: 540)
-        case .system: return CGSize(width: 660, height: 380)
+        case .system: return CGSize(width: 680, height: 420)
         case .pets: return CGSize(width: 700, height: 560)
         case .windows: return CGSize(width: 560, height: 380)
         case .tools: return CGSize(width: 620, height: 500)

@@ -222,9 +222,36 @@ struct SystemView: View {
     @ObservedObject var m = SystemMonitor.shared
     @Environment(\.compactNotch) private var compact
 
+    @AppStorage("systemMode") private var mode = "pc"
+
     private func gb(_ bytes: Double) -> String { String(format: "%.1f", bytes / 1_073_741_824) }
 
     var body: some View {
+        VStack(alignment: .leading, spacing: compact ? 6 : 10) {
+            HStack(spacing: 4) {
+                modeButton("pc", "Компьютер", "cpu")
+                modeButton("net", "Интернет", "wifi")
+                Spacer(minLength: 0)
+            }
+            if mode == "net" { InternetView() } else { computer }
+        }
+    }
+
+    private func modeButton(_ key: String, _ title: String, _ icon: String) -> some View {
+        Button {
+            withAnimation(.easeOut(duration: 0.12)) { mode = key }
+        } label: {
+            Label(title, systemImage: icon)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(mode == key ? Color.white : Theme.dim)
+                .padding(.horizontal, 9).padding(.vertical, 3)
+                .background(Capsule().fill(mode == key ? Color.white.opacity(0.16) : Color.white.opacity(0.05)))
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var computer: some View {
         HStack(alignment: .top, spacing: 14) {
             HStack(alignment: .top, spacing: 10) {
                 RingView(title: "Процессор", value: m.cpu, text: "\(Int(m.cpu * 100))%",
