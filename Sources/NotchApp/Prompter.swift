@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import AVFoundation
 
 /// Суфлёр: отдельное окно, скрытое от записи и демонстрации экрана (sharingType = .none)
 final class PrompterService: ObservableObject {
@@ -12,6 +13,42 @@ final class PrompterService: ObservableObject {
     @Published var fontSize: Double = 28
     @Published var opacity: Double = 0.8
     @Published var pauseOnHover = true
+    /// Режим «по голосу»: текст едет, только пока ты говоришь, и встаёт, когда молчишь
+    @Published var voiceMode = false { didSet { voiceMode ? startMic() : stopMic() } }
+    @Published var voiceLevel: Float = 0
+    private var engine: AVAudioEngine?
+    private var lastVoice = Date.distantPast
+
+    private func startMic() {
+        guard engine == nil else { return }
+        AVCaptureDevice.requestAccess(for: .audio) { ok in
+            DispatchQueue.main.async {
+                guard ok else { self.voiceMode = false; return }
+                let e = AVAudioEngine()
+                let input = e.inputNode
+                let format = input.outputFormat(forBus: 0)
+                input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buf, _ in
+                    guard let ch = buf.floatChannelData?[0] else { return }
+                    let n = Int(buf.frameLength)
+                    var sum: Float = 0
+                    for i in 0..<n { sum += ch[i] * ch[i] }
+                    let rms = sqrt(sum / Float(max(1, n)))
+                    DispatchQueue.main.async {
+                        self?.voiceLevel = rms
+                        if rms > 0.015 { self?.lastVoice = Date() }
+                    }
+                }
+                do { try e.start(); self.engine = e } catch { self.voiceMode = false }
+            }
+        }
+    }
+
+    private func stopMic() {
+        engine?.inputNode.removeTap(onBus: 0)
+        engine?.stop()
+        engine = nil
+        voiceLevel = 0
+    }
     @Published var running = false
     @Published var visible = false
 
@@ -30,6 +67,7 @@ final class PrompterService: ObservableObject {
     }
 
     func hide() {
+        if voiceMode { voiceMode = false }
         running = false
         timer?.invalidate()
         window?.orderOut(nil)
@@ -65,6 +103,8 @@ final class PrompterService: ObservableObject {
         guard let scroll, let doc = scroll.documentView else { return }
         // Навёл мышь на суфлёр — текст стоит, убрал — едет дальше
         if pauseOnHover, let w = window, w.frame.contains(NSEvent.mouseLocation) { return }
+        // По голосу: стоим, если тишина дольше 0,7 с
+        if voiceMode && Date().timeIntervalSince(lastVoice) > 0.7 { return }
         let maxY = max(0, doc.frame.height - scroll.contentView.bounds.height)
         var y = scroll.contentView.bounds.origin.y + CGFloat(speed) / 60
         if y >= maxY {
@@ -133,6 +173,8 @@ struct ScriptView: View {
                 slider("Скорость", $p.speed, 5...120)
                 slider("Шрифт", $p.fontSize, 16...60)
                 slider("Фон", $p.opacity, 0.2...1)
+                Toggle("Ехать, только пока я говорю (микрофон)", isOn: $p.voiceMode)
+                    .toggleStyle(.checkbox)
                 Toggle("Пауза при наведении мыши", isOn: $p.pauseOnHover)
                     .toggleStyle(.checkbox)
                 Text("Окно суфлёра скрыто от записи и показа экрана")

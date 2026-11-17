@@ -26,12 +26,13 @@ enum Disk {
 // MARK: - Вкладки
 
 enum Tab: String, CaseIterable, Identifiable {
-    case home, music, notes, script, translate, recognize, clipboard, shelf, calendar, pets, tools
+    case home, music, notes, script, translate, focus, servers
+    case recognize, clipboard, shelf, calendar, system, pets, windows, tools
     var id: String { rawValue }
 
-    /// Разделы разложены по двум рейлам, чтобы панель была ниже.
-    static let leftRail: [Tab] = [.home, .music, .notes, .script, .translate]
-    static let rightRail: [Tab] = [.recognize, .clipboard, .shelf, .calendar, .pets, .tools]
+    /// Два рейла по 7 иконок — влезают даже в самую низкую панель.
+    static let leftRail: [Tab] = [.home, .music, .notes, .script, .translate, .focus, .servers]
+    static let rightRail: [Tab] = [.recognize, .clipboard, .shelf, .calendar, .system, .windows, .tools]
 
     var icon: String {
         switch self {
@@ -40,11 +41,15 @@ enum Tab: String, CaseIterable, Identifiable {
         case .notes: return "note.text"
         case .script: return "text.alignleft"
         case .translate: return "character.bubble"
+        case .focus: return "timer"
+        case .servers: return "server.rack"
         case .recognize: return "text.viewfinder"
         case .clipboard: return "doc.on.clipboard"
         case .shelf: return "tray.full"
         case .calendar: return "calendar"
+        case .system: return "cpu"
         case .pets: return "pawprint"
+        case .windows: return "rectangle.split.3x1"
         case .tools: return "wrench.and.screwdriver"
         }
     }
@@ -56,44 +61,56 @@ enum Tab: String, CaseIterable, Identifiable {
         case .notes: return "Заметки"
         case .script: return "Сценарий"
         case .translate: return "Переводчик"
+        case .focus: return "Помодоро"
+        case .servers: return "Серверы pm2"
         case .recognize: return "Распознать текст"
         case .clipboard: return "Буфер обмена"
         case .shelf: return "Полка"
         case .calendar: return "Календарь"
+        case .system: return "Система"
         case .pets: return "Питомцы и лимиты"
+        case .windows: return "Окна"
         case .tools: return "Инструменты"
         }
     }
 
     var subtitle: String {
         switch self {
-        case .home: return "Главное под рукой — музыка, календарь, ИИ и буфер"
-        case .music: return "Music, Spotify и то, что играет в системе"
+        case .home: return "Главное под рукой — музыка, серверы, календарь и буфер"
+        case .music: return "Всё, что играет на Mac: плееры, браузеры, видео"
         case .notes: return "Без автоисправлений, подчёркиваний и умных кавычек"
         case .script: return "Суфлёр, скрытый от записи и демонстрации экрана"
         case .translate: return "Офлайн-перевод Apple, без запросов к серверу"
-        case .recognize: return "Скриншот, голос и видео → текст на устройстве"
+        case .focus: return "Работа и перерывы по таймеру · ⌃⌥P"
+        case .servers: return "Процессы pm2 на твоих VPS, раз в минуту"
+        case .recognize: return "Скриншот, голос и видео → текст · ⌃⌥T"
         case .clipboard: return "История копирований с поиском и закреплением"
         case .shelf: return "Перетащи файл в чёлку — он останется здесь"
         case .calendar: return "События из Календаря macOS"
+        case .system: return "Процессор, память, батарея и диск"
         case .pets: return "Питомцы ИИ-агентов и остатки лимитов"
-        case .tools: return "Клавиатура, сон, автозапуск"
+        case .windows: return "Раскладки окон: потяни окно к чёлке · ⌃⌥←→↑↓"
+        case .tools: return "Клавиатура, сон, автозапуск · ⌃⌥N — меню"
         }
     }
 
     /// Высота панели под конкретный раздел: не держим большую панель там, где хватает маленькой.
     var panelHeight: CGFloat {
         switch self {
-        case .home: return 320
+        case .home: return 334
         case .music: return 280
         case .notes: return 310
         case .script: return 292
         case .translate: return 296
+        case .focus: return 300
+        case .servers: return 380
         case .recognize: return 320
         case .clipboard: return 310
         case .shelf: return 278
         case .calendar: return 340
+        case .system: return 300
         case .pets: return 340
+        case .windows: return 322
         case .tools: return 302
         }
     }
@@ -105,11 +122,15 @@ enum Tab: String, CaseIterable, Identifiable {
         case .notes: return CGSize(width: 620, height: 560)
         case .script: return CGSize(width: 820, height: 560)
         case .translate: return CGSize(width: 620, height: 400)
+        case .focus: return CGSize(width: 560, height: 360)
+        case .servers: return CGSize(width: 780, height: 620)
         case .recognize: return CGSize(width: 780, height: 540)
         case .clipboard: return CGSize(width: 520, height: 620)
         case .shelf: return CGSize(width: 640, height: 440)
         case .calendar: return CGSize(width: 680, height: 540)
+        case .system: return CGSize(width: 660, height: 380)
         case .pets: return CGSize(width: 700, height: 560)
+        case .windows: return CGSize(width: 560, height: 380)
         case .tools: return CGSize(width: 620, height: 500)
         }
     }
@@ -125,6 +146,7 @@ struct AlertItem: Identifiable {
     let title: String
     let text: String
     let kind: AlertKind
+    var channel: AlertChannel = .local     // что дублировать в Telegram
 }
 
 // MARK: - Общее состояние чёлки
@@ -138,13 +160,16 @@ final class NotchState: ObservableObject {
     @Published var alert: AlertItem?
 
     var notchH: CGFloat = 32
+    var notchW: CGFloat = 200
     var onExpandRequest: ((Bool) -> Void)?
     private var alertTimer: Timer?
 
     func showAlert(_ a: AlertItem) {
+        TelegramNotifier.shared.forward(a)
         alert = a
         alertTimer?.invalidate()
-        let secs: TimeInterval = a.kind == .permission ? 14 : 7
+        // Короткий показ: обычное — 4 с, важное (нужно разрешение, сбой) — 8 с
+        let secs: TimeInterval = (a.kind == .permission || a.kind == .error) ? 8 : 4
         alertTimer = Timer.scheduledTimer(withTimeInterval: secs, repeats: false) { [weak self] _ in
             self?.alert = nil
         }

@@ -30,3 +30,4 @@ flask_session/
 temp_media/
 tracked_*.json
 .qtcreator/
+scripts/backup.sh

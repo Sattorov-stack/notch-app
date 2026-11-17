@@ -33,7 +33,9 @@ struct ExpandedView: View {
             VStack(spacing: 9) {
                 header
                 SectionBody(tab: state.tab)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    // Раздел не может растянуть панель: лишнее прокручивается внутри, углы на месте
+                    .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .topLeading)
+                    .clipped()
             }
             .frame(maxWidth: .infinity)
             rail(Tab.rightRail)
@@ -81,16 +83,8 @@ struct ExpandedView: View {
                 .help(a.text)
             }
 
-            HStack(spacing: 5) {
-                ServerDot(ok: hub.serverOK)
-                Text("\(hub.agents.count) ИИ")
-                    .font(.system(size: 9.5, weight: .medium))
-                    .foregroundStyle(Theme.dim)
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(Capsule().fill(Color.white.opacity(0.07)))
-
+            MirrorButton()
+            ColorPickButton()
             GlassIconButton(icon: "macwindow", help: "Открыть раздел в отдельном окне") {
                 SectionWindows.shared.open(state.tab)
             }
@@ -107,9 +101,10 @@ struct ExpandedView: View {
 }
 
 /// Питомец выглядывает из чёлки с сообщением агента.
+/// Уведомление в чёлке: только полоса по бокам от неё, на экран не опускается.
+/// Слева — значок и от кого, справа — суть одной строкой. Полный текст — в подсказке.
 struct AlertView: View {
     let item: AlertItem
-    @State private var hop = false
 
     private var accent: Color {
         switch item.kind {
@@ -121,36 +116,34 @@ struct AlertView: View {
     }
 
     var body: some View {
-        HStack(spacing: 11) {
-            Text(item.emoji)
-                .font(.system(size: 27))
-                .offset(y: hop ? -3 : 2)
-                .animation(.easeInOut(duration: 0.38).repeatForever(autoreverses: true), value: hop)
-            VStack(alignment: .leading, spacing: 1) {
+        let s = NotchState.shared
+        HStack(spacing: 0) {
+            HStack(spacing: 5) {
+                Text(item.emoji).font(.system(size: 12))
                 Text(item.title)
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.system(size: 10.5, weight: .medium))
                     .foregroundStyle(Theme.dim)
                     .lineLimit(1)
-                Text(item.text)
-                    .font(.system(size: 12.5, weight: .semibold))
-                    .foregroundStyle(accent)
-                    .lineLimit(1)
             }
-            Spacer(minLength: 0)
-            Image(systemName: "chevron.right")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(Theme.faint)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Color.clear.frame(width: s.notchW)              // место самой чёлки
+            Text(item.text)
+                .font(.system(size: 10.5, weight: .semibold))
+                .foregroundStyle(accent)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: .infinity, alignment: .trailing)
         }
-        .padding(.horizontal, 18)
-        .padding(.top, NotchState.shared.notchH + 4)
-        .padding(.bottom, 10)
+        .padding(.horizontal, 12)
+        .frame(height: s.notchH)
         .contentShape(Rectangle())
-        .onAppear { hop = true }
+        .help("\(item.title): \(item.text)")
         .onTapGesture {
-            let s = NotchState.shared
             s.dismissAlert()
-            s.tab = .pets
-            s.onExpandRequest?(true)
+            if item.channel == .servers {
+                s.tab = .servers
+                s.onExpandRequest?(true)
+            }
         }
     }
 }

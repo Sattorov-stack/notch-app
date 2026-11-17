@@ -2,10 +2,17 @@ import AppKit
 import SwiftUI
 import Combine
 import QuartzCore
+import Carbon.HIToolbox
 
 final class NotchPanel: NSPanel {
     // Нужно, чтобы в панели работали поля ввода
     override var canBecomeKey: Bool { true }
+
+    // ⌘C/⌘V/⌘X/⌘A/⌘Z — у фонового приложения нет меню «Правка», доставляем сами
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if EditShortcuts.handle(event, in: self) { return true }
+        return super.performKeyEquivalent(with: event)
+    }
 
     // Клик делает окно ключевым ДО обработки нажатия: иначе первое нажатие
     // в текстовое поле теряется и ⌘V/ввод не работают.
@@ -15,7 +22,7 @@ final class NotchPanel: NSPanel {
         makeKey()
         if !isKeyWindow {
             // страховка на случай, если система не отдала key неактивному приложению
-            NSApp.activate(ignoringOtherApps: true)
+            NSApp.activate()
             makeKey()
         }
         super.mouseDown(with: event)
@@ -36,6 +43,41 @@ final class NotchController: NSObject {
     private var wasDown = false
     private var bag = Set<AnyCancellable>()
     private var statusItem: NSStatusItem?
+    private var openedByKeyboard = false
+    static weak var current: NotchController?
+
+    /// Открывает панель на нужном разделе, снимает её как есть и закрывает обратно
+    /// Снимок уведомления — для проверки вида
+    func captureAlert() {
+        if state.expanded { setExpanded(false) }
+        state.showAlert(AlertItem(emoji: "🖥️", title: "my", text: "n8n — остановлен", kind: .error))
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            guard let self, let v = self.panel.contentView,
+                  let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { return }
+            v.cacheDisplay(in: v.bounds, to: rep)
+            if let png = rep.representation(using: .png, properties: [:]) {
+                try? png.write(to: URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("notch-live-alert.png"))
+            }
+            self.state.dismissAlert()
+        }
+    }
+
+    func captureLive(_ tab: Tab) {
+        state.tab = tab
+        openedByKeyboard = true
+        if !state.expanded { setExpanded(true) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+            guard let self, let v = self.panel.contentView,
+                  let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { return }
+            v.cacheDisplay(in: v.bounds, to: rep)
+            if let png = rep.representation(using: .png, properties: [:]) {
+                let url = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("notch-live-\(tab.rawValue).png")
+                try? png.write(to: url)
+            }
+            self.setExpanded(false)
+        }
+    }
+    private var monitors: [Any] = []
 
     override init() {
         panel = NotchPanel(contentRect: NSRect(x: 0, y: 0, width: 200, height: 32),
@@ -68,7 +110,7 @@ final class NotchController: NSObject {
         // У каждого раздела своя высота — пересчитываем рамку при переключении
         state.$tab
             .receive(on: RunLoop.main)
-            .sink { [weak self] _ in
+            .sink { [weak self] tab in
                 guard let self else { return }
                 self.layout()
                 if self.state.expanded { self.applyFrame(animate: true) }
@@ -89,6 +131,9 @@ final class NotchController: NSObject {
         timer = t
 
         setupStatusItem()
+        setupHotKeys()
+        NotchController.current = self
+        setupMonitors()
     }
 
     private func layout() {
@@ -103,12 +148,14 @@ final class NotchController: NSObject {
         }
         if h < 24 { h = 32 }
         state.notchH = h
+        state.notchW = w
         collapsedRect = NSRect(x: f.midX - w / 2, y: f.maxY - h, width: w, height: h)
 
         let ew = NotchLayout.expandedWidth, eh = state.tab.panelHeight
         expandedRect = NSRect(x: f.midX - ew / 2, y: f.maxY - eh, width: ew, height: eh)
 
-        let aw = max(w + 300, 560), ah = h + 58
+        // Уведомление — только полоса по бокам от чёлки, ниже чёлки не опускается
+        let aw = w + 2 * 170, ah = h
         alertRect = NSRect(x: f.midX - aw / 2, y: f.maxY - ah, width: aw, height: ah)
     }
 
@@ -159,7 +206,10 @@ final class NotchController: NSObject {
         if state.pinned || leftDown { outsideSince = nil; return }
 
         let keep = expandedRect.insetBy(dx: -6, dy: -4)
-        if keep.contains(m) { outsideSince = nil; return }
+        if keep.contains(m) { openedByKeyboard = false; outsideSince = nil; return }
+        // Открыто горячей клавишей: не закрываем, пока мышь не побывала в меню.
+        // Закрыть: Esc, ⌃⌥N или клик мимо.
+        if openedByKeyboard { outsideSince = nil; return }
 
         // Если курсор в поле ввода — даём чуть больше времени, но меню всё равно закроется
         let typing = panel.isKeyWindow && panel.firstResponder is NSTextView
@@ -173,6 +223,7 @@ final class NotchController: NSObject {
         outsideSince = nil
         insideSince = nil
         if !v {
+            openedByKeyboard = false
             panel.makeFirstResponder(nil)
         }
         state.expanded = v
@@ -198,13 +249,69 @@ final class NotchController: NSObject {
         }
     }
 
+    /// ⌃⌥N: открыть меню с клавиатуры (и сразу печатать в поле) или закрыть его.
+    func toggleByHotkey() {
+        if state.expanded { setExpanded(false); return }
+        openedByKeyboard = true
+        setExpanded(true)
+        panel.makeKey()
+    }
+
+    private func setupHotKeys() {
+        let mods = controlKey | optionKey
+        HotKeys.shared.register(id: 1, keyCode: kVK_ANSI_N, modifiers: mods) { [weak self] in
+            self?.toggleByHotkey()
+        }
+        HotKeys.shared.register(id: 2, keyCode: kVK_ANSI_T, modifiers: mods) {
+            RecognizeService.shared.screenshot()
+        }
+        HotKeys.shared.register(id: 3, keyCode: kVK_ANSI_C, modifiers: mods) {
+            ColorPickService.shared.pick()
+        }
+        HotKeys.shared.register(id: 4, keyCode: kVK_ANSI_P, modifiers: mods) {
+            PomodoroService.shared.toggle()
+        }
+        HotKeys.shared.register(id: 5, keyCode: kVK_ANSI_M, modifiers: mods) {
+            CameraMirror.shared.toggle()
+        }
+        // Раскладки активного окна: ⌃⌥← левая половина, ⌃⌥→ правая, ⌃⌥↑ весь экран, ⌃⌥↓ по центру
+        let snaps: [(UInt32, Int, Int, Int)] = [(6, kVK_LeftArrow, 1, 0), (7, kVK_RightArrow, 1, 1),
+                                                 (8, kVK_UpArrow, 0, 0), (9, kVK_DownArrow, 7, 0)]
+        for (id, key, layout, zone) in snaps {
+            HotKeys.shared.register(id: id, keyCode: key, modifiers: mods) {
+                SnapController.shared.snapFrontmost(layout: layout, zone: zone, assist: false)
+            }
+        }
+    }
+
+    private func setupMonitors() {
+        // Клик мимо меню в другом приложении — меню сразу закрывается
+        if let g = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown], handler: { [weak self] _ in
+            guard let self, self.state.expanded, !self.state.pinned else { return }
+            if !self.expandedRect.contains(NSEvent.mouseLocation) { self.setExpanded(false) }
+        }) { monitors.append(g) }
+
+        // Esc — закрыть меню; ⌘1…⌘0 — первые десять разделов
+        if let l = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: { [weak self] e in
+            guard let self, self.state.expanded, e.window === self.panel else { return e }
+            if EditShortcuts.handle(e, in: self.panel) { return nil }   // ⌘V и др. в любой раскладке
+            if e.keyCode == UInt16(kVK_Escape) { self.setExpanded(false); return nil }
+            if e.modifierFlags.contains(.command), let ch = e.charactersIgnoringModifiers, let n = Int(ch) {
+                let tabs = Tab.allCases
+                let i = n == 0 ? 9 : n - 1
+                if i < tabs.count { self.state.tab = tabs[i]; return nil }
+            }
+            return e
+        }) { monitors.append(l) }
+    }
+
     private func setupStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         item.button?.image = NSImage(systemSymbolName: "rectangle.topthird.inset.filled",
                                      accessibilityDescription: "Чёлка")
         let menu = NSMenu()
 
-        let open = NSMenuItem(title: "Показать меню", action: #selector(showMenu), keyEquivalent: "")
+        let open = NSMenuItem(title: "Показать меню   ⌃⌥N", action: #selector(showMenu), keyEquivalent: "")
         open.target = self
         menu.addItem(open)
         menu.addItem(.separator())
@@ -236,13 +343,37 @@ final class NotchController: NSObject {
 
 // MARK: - Запуск
 
+// Самопроверка переводчика: NotchApp --selftest-translate
+if CommandLine.arguments.contains("--selftest-translate") || CommandLine.arguments.contains("--selftest-ai") {
+    Task {
+        let ok = CommandLine.arguments.contains("--selftest-ai") ? await AISelfTest.run() : await TranslateSelfTest.run()
+        exit(ok ? 0 : 1)
+    }
+    dispatchMain()
+}
+
 let app = NSApplication.shared
 app.setActivationPolicy(.accessory)    // без иконки в Dock
+
+// Запись в закрытый канал помощника не должна ронять приложение
+signal(SIGPIPE, SIG_IGN)
+
+// Вторая копия не нужна: если уже запущена — тихо выходим (код 0, launchd её не перезапустит)
+if let bid = Bundle.main.bundleIdentifier,
+   NSRunningApplication.runningApplications(withBundleIdentifier: bid)
+       .contains(where: { $0.processIdentifier != getpid() }) {
+    exit(0)
+}
 
 ClipboardStore.shared.start()
 MusicService.shared.start()
 AgentHub.shared.start()
 SleepGuard.shared.refresh()
+SystemNowPlaying.shared.start()
+SystemMonitor.shared.start()
+ServersService.shared.start()
+SnapController.shared.start()
+BackupMonitor.shared.start()
 
 let controller = NotchController()
 

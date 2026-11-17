@@ -32,6 +32,8 @@ struct AgentFamily {
 /// отказывался слушать loopback с requiredInterfaceType = .loopback.
 final class AgentHTTPServer {
     private let queue = DispatchQueue(label: "notch.agent.http", qos: .utility)
+    /// Не больше 8 соединений одновременно — поток запросов не съест потоки приложения.
+    private let slots = DispatchSemaphore(value: 8)
     private var listenFD: Int32 = -1
     private var running = false
 
@@ -92,7 +94,11 @@ final class AgentHTTPServer {
             }
             // Отдельная очередь: listenLoop занимает serial-очередь навсегда,
             // поэтому обработчики нельзя ставить в неё же.
-            DispatchQueue.global(qos: .utility).async { self.handle(client) }
+            if slots.wait(timeout: .now()) == .timedOut { close(client); continue }
+            DispatchQueue.global(qos: .utility).async {
+                defer { self.slots.signal() }
+                self.handle(client)
+            }
         }
         close(fd)
         listenFD = -1
@@ -133,6 +139,19 @@ final class AgentHTTPServer {
         let method = parts.first.map(String.init) ?? "GET"
         let path = parts.count > 1 ? String(parts[1]) : "/"
 
+        // Защита: браузер всегда добавляет Origin к запросам со страниц — такие запросы
+        // не принимаем, чтобы сайт не мог слать события и открывать окна.
+        // Host проверяем от подмены DNS (DNS rebinding).
+        let lowerHead = head.lowercased()
+        let hostOK = lowerHead.contains("\r\nhost: 127.0.0.1") || lowerHead.contains("\r\nhost: localhost")
+        if lowerHead.contains("\r\norigin:") || !hostOK {
+            let deny = "{\"ok\":false,\"error\":\"forbidden\"}"
+            let msg = "HTTP/1.1 403 Forbidden\r\nContent-Type: application/json\r\n"
+                + "Content-Length: \(deny.utf8.count)\r\nConnection: close\r\n\r\n" + deny
+            _ = msg.withCString { send(client, $0, strlen($0), 0) }
+            return
+        }
+
         var status = "200 OK"
         var response = "{\"ok\":true}"
 
@@ -151,32 +170,9 @@ final class AgentHTTPServer {
             response = "{\"ok\":true}"
         } else if path.hasPrefix("/ax") {
             var dict: [String: Any] = ["trusted": AXWindow.trusted]
-            dict["firefox"] = AXWindow.title(bundleID: "org.mozilla.firefox") ?? ""
-            dict["chrome"] = AXWindow.title(bundleID: "com.google.Chrome") ?? ""
             dict["firefoxAutomation"] = Automation.allowed("org.mozilla.firefox")
             dict["chromeAutomation"] = Automation.allowed("com.google.Chrome")
             dict["quicktimeAutomation"] = Automation.allowed("com.apple.QuickTimePlayerX")
-            if let data = try? JSONSerialization.data(withJSONObject: dict),
-               let json = String(data: data, encoding: .utf8) {
-                response = json
-            } else {
-                response = "{\"ok\":false}"
-            }
-        } else if method == "GET" && path.hasPrefix("/browser") {
-            let chrome = AppleScriptRunner.run("""
-            tell application "Google Chrome"
-                if (count of windows) is 0 then return ""
-                return (title of active tab of front window) & "||" & (URL of active tab of front window)
-            end tell
-            """)
-            let safari = AppleScriptRunner.run("""
-            tell application "Safari"
-                if (count of windows) is 0 then return ""
-                return (name of current tab of front window) & "||" & (URL of current tab of front window)
-            end tell
-            """)
-            let dict: [String: Any] = ["chrome_out": chrome.out, "chrome_err": chrome.err,
-                                       "safari_out": safari.out, "safari_err": safari.err]
             if let data = try? JSONSerialization.data(withJSONObject: dict),
                let json = String(data: data, encoding: .utf8) {
                 response = json
@@ -197,6 +193,31 @@ final class AgentHTTPServer {
                let t = obj["tab"] as? String { tab = t }
             let ok = DispatchQueue.main.sync { self.onSnapshot?(tab) ?? false }
             response = ok ? "{\"ok\":true}" : "{\"ok\":false}"
+        } else if method == "POST" && path.hasPrefix("/winsnap") {
+            // Проверка раскладок: активное окно → раскладка/часть, в ответе — новая рамка окна
+            let obj = (try? JSONSerialization.jsonObject(with: Data(bodyData))) as? [String: Any]
+            let l = obj?["layout"] as? Int ?? 1, z = obj?["zone"] as? Int ?? 0
+            var result = "нет активного окна"
+            DispatchQueue.main.sync {
+                SnapController.shared.snapFrontmost(layout: l, zone: z, assist: false)
+                if let w = AXHelp.focusedWindow(fallback: nil), let f = AXHelp.frame(w) {
+                    result = "\(Int(f.minX)),\(Int(f.minY)) \(Int(f.width))x\(Int(f.height))"
+                }
+            }
+            response = "{\"ok\":true,\"frame\":\"\(result)\"}"
+        } else if method == "POST" && path.hasPrefix("/capturealert") {
+            DispatchQueue.main.async { NotchController.current?.captureAlert() }
+            response = "{\"ok\":true}"
+        } else if method == "POST" && path.hasPrefix("/capture") {
+            // Снимок настоящей открытой панели — для проверки вёрстки
+            let obj = (try? JSONSerialization.jsonObject(with: Data(bodyData))) as? [String: Any]
+            if let name = obj?["tab"] as? String, let tab = Tab(rawValue: name) {
+                DispatchQueue.main.async { NotchController.current?.captureLive(tab) }
+                response = "{\"ok\":true}"
+            } else {
+                status = "400 Bad Request"
+                response = "{\"ok\":false,\"error\":\"need {tab}\"}"
+            }
         } else if method == "POST" && path.hasPrefix("/open") {
             if let obj = try? JSONSerialization.jsonObject(with: Data(bodyData)) as? [String: Any],
                let tab = obj["tab"] as? String {
@@ -329,7 +350,25 @@ final class AgentHub: ObservableObject {
                            "clipDebug": ClipboardStore.shared.debug,
                            "yandexDebug": MusicService.shared.yandexDebug,
                            "clips": ClipboardStore.shared.items.count],
-                 "events": self.events.count]
+                 "events": self.events.count,
+                 "helper": SystemNowPlaying.shared.isAvailable,
+                 "limitStatus": LimitFetcher.shared.status,
+                 "backups": BackupMonitor.shared.entries.mapValues {
+                     ["ok": $0.ok, "ageMin": Int(Date().timeIntervalSince($0.time) / 60), "sizeKB": $0.size / 1024] as [String: Any]
+                 },
+                 "telegram": TelegramNotifier.shared.isReady,
+                 "pomodoro": ["running": PomodoroService.shared.running,
+                              "left": PomodoroService.shared.display,
+                              "phase": PomodoroService.shared.title],
+                 "system": ["cpu": Int(SystemMonitor.shared.cpu * 100),
+                            "battery": SystemMonitor.shared.battery?.percent ?? -1],
+                 "servers": ServersService.shared.servers.map { srv -> [String: Any] in
+                     let st = ServersService.shared.status[srv.id]
+                     return ["name": srv.name,
+                             "error": st?.error ?? "",
+                             "meta": st?.meta.dict ?? [:],
+                             "procs": st?.procs.map { "\($0.kind)/\($0.name):\($0.status)" } ?? []]
+                 }]
             }
         }
         server.onOpen = { tab in
@@ -355,15 +394,42 @@ final class AgentHub: ObservableObject {
     }
 
     /// Какие из найденных агентов сейчас запущены — чтобы питомец не «спал», когда приложение открыто.
+    /// «Онлайн» — только настоящее открытое приложение (с иконкой в Dock) или реально
+    /// запущенная консольная программа. Фоновые помощники, расширения Finder, значки
+    /// в Dock и системные службы Apple (например, CursorUIViewService) не считаются.
     func refreshRunning() {
         var ids = Set<String>()
-        for app in NSWorkspace.shared.runningApplications {
-            if let fam = Self.family(matching: app.localizedName ?? "",
-                                     bundle: app.bundleIdentifier ?? "") {
+        for app in NSWorkspace.shared.runningApplications where app.activationPolicy == .regular {
+            let bundle = app.bundleIdentifier ?? ""
+            if bundle.hasPrefix("com.apple.") { continue }
+            if let fam = Self.family(matching: app.localizedName ?? "", bundle: bundle) {
                 ids.insert(fam.id)
             }
         }
+        ids.formUnion(Self.runningCLIAgents())
         if ids != running { running = ids }
+    }
+
+    /// Консольные агенты: Claude Code, Codex, OpenCode — по пути запущенной программы.
+    static func runningCLIAgents() -> Set<String> {
+        var ids = Set<String>()
+        let n = proc_listallpids(nil, 0)
+        guard n > 0 else { return ids }
+        var pids = [pid_t](repeating: 0, count: Int(n) + 64)
+        let count = proc_listallpids(&pids, Int32(pids.count * MemoryLayout<pid_t>.size))
+        var buf = [CChar](repeating: 0, count: 4096)
+        for pid in pids.prefix(Int(max(0, count))) where pid > 0 {
+            guard proc_pidpath(pid, &buf, UInt32(buf.count)) > 0 else { continue }
+            let path = String(cString: buf)
+            if path.contains("/.local/share/claude/versions/") || path.hasSuffix("/claude") {
+                ids.insert("claude")
+            } else if path.hasSuffix("/codex") {
+                ids.insert("codex")
+            } else if path.hasSuffix("/opencode") {
+                ids.insert("opencode")
+            }
+        }
+        return ids
     }
 
     func statusText(for agent: String) -> String {
@@ -528,7 +594,8 @@ final class AgentHub: ObservableObject {
 
         let title = displayName(for: id)
         let text = message.isEmpty ? kindLabel(kind) : "\(kindLabel(kind)) — \(message)"
-        NotchState.shared.showAlert(AlertItem(emoji: pet(for: id), title: title, text: text, kind: kind))
+        NotchState.shared.showAlert(AlertItem(emoji: kind == .done ? "✅" : (kind == .permission ? "✋" : (kind == .error ? "⚠️" : "💬")),
+                                                  title: title, text: text, kind: kind, channel: .agents))
         if kind == .permission || kind == .error { NSSound(named: "Glass")?.play() }
     }
 
@@ -634,8 +701,7 @@ struct AgentChip: View {
     @ObservedObject var hub = AgentHub.shared
 
     var body: some View {
-        Text(hub.pet(for: agent))
-            .font(.system(size: 17))
+        PetAvatar(agent: agent, size: 24)
             .frame(width: 33, height: 27)
             .background(RoundedRectangle(cornerRadius: 9, style: .continuous)
                 .fill(hub.statusColor(for: agent).opacity(0.12)))
@@ -657,11 +723,7 @@ struct AgentTile: View {
 
     var body: some View {
         VStack(spacing: compact ? 1 : 3) {
-            Text(hub.pet(for: agent))
-                .font(.system(size: compact ? 16 : 25))
-                .frame(width: compact ? 22 : 44, height: compact ? 22 : 44)
-                .background(Circle().fill(color.opacity(0.13)))
-                .overlay(Circle().strokeBorder(color.opacity(0.30), lineWidth: 0.8))
+            PetAvatar(agent: agent, size: compact ? 24 : 44)
             Text(hub.displayName(for: agent))
                 .font(.system(size: compact ? 7.5 : 9.5, weight: .medium))
                 .foregroundStyle(Theme.text)
@@ -788,13 +850,22 @@ struct PetsView: View {
 
     private var compactLimits: some View {
         VStack(alignment: .leading, spacing: 5) {
-            Text("ЛИМИТЫ ИИ")
-                .font(.system(size: 8.5, weight: .semibold))
-                .tracking(0.6)
+            HStack(spacing: 4) {
+                Text("ЛИМИТЫ ИИ")
+                    .font(.system(size: 8.5, weight: .semibold))
+                    .tracking(0.6)
+                    .foregroundStyle(Theme.faint)
+                Spacer()
+                Button { LimitFetcher.shared.refresh(force: true) } label: {
+                    Image(systemName: "arrow.clockwise").font(.system(size: 8))
+                }
+                .buttonStyle(.plain)
                 .foregroundStyle(Theme.faint)
+                .help("Обновить лимиты Claude и Codex")
+            }
             let withData = hub.agents.filter { hub.limits[$0] != nil }
             if withData.isEmpty {
-                Text("Нет данных: агент присылает процент сам")
+                Text("Claude и Codex — автоматически. Остальные сервисы остаток не сообщают")
                     .font(.system(size: 9))
                     .foregroundStyle(Theme.faint)
                     .lineLimit(2)
@@ -1025,7 +1096,7 @@ struct PetsView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(RoundedRectangle(cornerRadius: 11, style: .continuous).fill(Theme.cardFill))
 
-            Text("Агент сам присылает процент: POST /event {\"agent\":\"codex\",\"remaining\":64}")
+            Text("Claude и Codex — настоящие остатки с их серверов, обновляются каждые 5 минут. ChatGPT-чат, Gemini, Cursor, DeepSeek и другие остаток наружу не отдают.")
                 .font(.system(size: 8.5))
                 .foregroundStyle(Theme.faint)
                 .lineLimit(3)
@@ -1066,9 +1137,10 @@ struct PetsView: View {
                         .foregroundStyle(info.remaining < 20 ? Theme.red : Theme.green)
                 }
             } else {
-                Text("нет данных")
+                Text(LimitFetcher.shared.status[a] ?? "сервис не сообщает остаток")
                     .font(.system(size: 8.5))
                     .foregroundStyle(Theme.faint)
+                    .lineLimit(2)
             }
         }
     }

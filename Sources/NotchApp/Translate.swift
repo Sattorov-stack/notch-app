@@ -21,6 +21,12 @@ final class TranslateModel: ObservableObject {
     @Published var needDownload = false
     @Published var config: TranslationSession.Configuration?
     @Published var prepareDownload = false
+    @Published var polishing = false      // ИИ дорабатывает перевод
+    @Published var aiUsed = false         // текущий перевод улучшен ИИ
+    private var appleDraft = ""
+
+    /// ИИ-шлифовка: Apple переводит мгновенно, локальная модель (Ollama) делает текст естественнее.
+    var aiPolishEnabled: Bool { UserDefaults.standard.object(forKey: "aiPolish") as? Bool ?? true }
 
     private var pending = ""
     private var pendingSource = "en"
@@ -178,9 +184,38 @@ final class TranslateModel: ObservableObject {
     private func finish(_ text: String, id: UUID) {
         guard id == requestID else { return }
         output = text
+        appleDraft = text
+        aiUsed = false
         busy = false
         error = nil
         status = "\(name(pendingSource)) → \(name(pendingTarget))"
+        if aiPolishEnabled { polish(original: pending, draft: text, id: id) }
+    }
+
+    private func polish(original: String, draft: String, id: UUID) {
+        guard original.count <= 1500, !draft.isEmpty else { return }
+        polishing = true
+        let target = pendingTarget
+        Task {
+            let better = await AIPolish.polish(original: original, draft: draft, target: target)
+            await MainActor.run {
+                guard id == self.requestID else { return }
+                self.polishing = false
+                if let b = better, b != draft {
+                    self.output = b
+                    self.aiUsed = true
+                    self.status = "\(self.name(self.pendingSource)) → \(self.name(self.pendingTarget)) · ✨ ИИ"
+                }
+            }
+        }
+    }
+
+    /// Вернуть дословный перевод Apple вместо ИИ-варианта.
+    func showAppleDraft() {
+        guard aiUsed, !appleDraft.isEmpty else { return }
+        output = appleDraft
+        aiUsed = false
+        status = "\(name(pendingSource)) → \(name(pendingTarget)) · Apple"
     }
 
     private func fail(_ error: Error, id: UUID) {
@@ -201,11 +236,95 @@ final class TranslateModel: ObservableObject {
     }
 }
 
+// MARK: - ИИ-шлифовка (Ollama, локально)
+
+enum AIPolish {
+    static let endpoint = "http://127.0.0.1:11434"
+
+    static let names: [String: String] = [
+        "ru": "русский", "en": "английский", "de": "немецкий", "fr": "французский",
+        "es": "испанский", "it": "итальянский", "pt": "португальский", "tr": "турецкий",
+        "uk": "украинский", "ar": "арабский", "zh-Hans": "китайский", "ja": "японский", "ko": "корейский",
+    ]
+
+    static func systemPrompt(_ target: String) -> String {
+        """
+        Ты улучшаешь машинный перевод переписки. Даны оригинал и черновой перевод на \(names[target] ?? target) язык. \
+        Сделай перевод естественным, как написал бы носитель языка в мессенджере: передай тон и сленг, \
+        но НЕ меняй смысл, ничего не добавляй (никаких смайлов и пояснений) и не отвечай на текст. \
+        Если черновик уже хороший — верни его без изменений. Верни только итоговый перевод.
+        """
+    }
+
+    /// Возвращает улучшенный перевод или nil (нет Ollama, ошибка, подозрительный ответ).
+    static func polish(original: String, draft: String, target: String) async -> String? {
+        guard let model = await pickModel() else { return nil }
+        let body: [String: Any] = [
+            "model": model, "stream": false, "keep_alive": "1h",
+            // original передаём и в sanitize — для проверки «не добавил ли ИИ лишнего»
+            "options": ["temperature": 0, "num_predict": 800],
+            "messages": [["role": "system", "content": systemPrompt(target)],
+                         ["role": "user", "content": "Оригинал: \(original)\nЧерновик: \(draft)"]],
+        ]
+        guard let url = URL(string: endpoint + "/api/chat"),
+              let data = try? JSONSerialization.data(withJSONObject: body) else { return nil }
+        var req = URLRequest(url: url, timeoutInterval: 12)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = data
+        guard let result = try? await URLSession.shared.data(for: req),
+              let json = (try? JSONSerialization.jsonObject(with: result.0)) as? [String: Any],
+              let text = (json["message"] as? [String: Any])?["content"] as? String else { return nil }
+        return sanitize(text, draft: draft, original: original)
+    }
+
+    static func sanitize(_ raw: String, draft: String, original: String = "") -> String? {
+        var t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        for prefix in ["Итоговый перевод:", "Перевод:", "Черновик:", "Translation:"] where t.hasPrefix(prefix) {
+            t = String(t.dropFirst(prefix.count)).trimmingCharacters(in: .whitespaces)
+        }
+        if t.count >= 2, let f = t.first, let l = t.last, "\"«“".contains(f), "\"»”".contains(l) {
+            t = String(t.dropFirst().dropLast())
+        }
+        guard !t.isEmpty, !t.contains("Оригинал:") else { return nil }
+        // защита от «ответил вместо перевода» и обрезанных ответов
+        if t.count > draft.count * 2 + 40 || t.count < draft.count / 3 { return nil }
+        // ИИ не должен превращать утверждение в вопрос («…by Friday, okay?»)
+        let q: (String) -> Int = { $0.filter { $0 == "?" || $0 == "？" }.count }
+        if q(t) > max(q(draft), q(original)) { return nil }
+        return t
+    }
+
+    /// Предпочитаем qwen2.5:7b; модели для эмбеддингов и картинок не подходят.
+    static func pickModel() async -> String? {
+        guard let url = URL(string: endpoint + "/api/tags") else { return nil }
+        guard let result = try? await URLSession.shared.data(for: URLRequest(url: url, timeoutInterval: 2)),
+              let json = (try? JSONSerialization.jsonObject(with: result.0)) as? [String: Any],
+              let models = json["models"] as? [[String: Any]] else { return nil }
+        let names = models.compactMap { $0["name"] as? String }
+            .filter { !$0.contains("embed") && !$0.contains("vl") }
+        if names.contains("qwen2.5:7b") { return "qwen2.5:7b" }
+        return names.first { $0.hasPrefix("qwen") } ?? names.first
+    }
+
+    /// Подгрузить модель заранее, чтобы первая шлифовка не ждала 10 секунд.
+    static func warmUp() {
+        Task {
+            guard let model = await pickModel(), let url = URL(string: endpoint + "/api/generate") else { return }
+            var req = URLRequest(url: url, timeoutInterval: 60)
+            req.httpMethod = "POST"
+            req.httpBody = try? JSONSerialization.data(withJSONObject: ["model": model, "keep_alive": "1h"])
+            _ = try? await URLSession.shared.data(for: req)
+        }
+    }
+}
+
 // MARK: - Экран переводчика
 
 struct TranslateView: View {
     @ObservedObject var model = TranslateModel.shared
     @AppStorage("autoTranslate") private var auto = true
+    @AppStorage("aiPolish") private var aiPolish = true
     @State private var copied = false
 
     var body: some View {
@@ -223,6 +342,7 @@ struct TranslateView: View {
         .onChange(of: model.input) { _, _ in model.scheduleAuto(enabled: auto) }
         .onChange(of: model.targetCode) { _, _ in model.translate() }
         .onChange(of: model.sourceCode) { _, _ in model.translate() }
+        .onAppear { if aiPolish { AIPolish.warmUp() } }
         .translationTask(model.config) { session in
             await model.handleTaskSession(session)
         }
@@ -259,6 +379,12 @@ struct TranslateView: View {
             Toggle("На лету", isOn: $auto)
                 .toggleStyle(.checkbox)
                 .font(.system(size: 10))
+
+            Toggle("✨ ИИ", isOn: $aiPolish)
+                .toggleStyle(.checkbox)
+                .font(.system(size: 10))
+                .help("Apple переводит мгновенно, затем локальная нейросеть (Ollama) делает перевод живее")
+                .onChange(of: aiPolish) { _, on in if on { AIPolish.warmUp(); model.translate() } }
 
             Spacer()
 
@@ -300,6 +426,14 @@ struct TranslateView: View {
             header("ПЕРЕВОД") {
                 if model.busy {
                     ProgressView().controlSize(.mini).scaleEffect(0.7)
+                } else if model.polishing {
+                    Text("✨ улучшаю…")
+                        .font(.system(size: 9))
+                        .foregroundStyle(Theme.accentSoft)
+                } else if model.aiUsed {
+                    Button("Дословно") { model.showAppleDraft() }
+                        .controlSize(.mini)
+                        .help("Показать перевод Apple без ИИ")
                 }
                 Button(copied ? "Скопировано" : "Копировать") {
                     model.copyOutput()

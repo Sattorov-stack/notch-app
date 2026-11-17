@@ -99,6 +99,7 @@ final class NotesStore: ObservableObject {
 
 struct NotesView: View {
     @ObservedObject var store = NotesStore.shared
+    @ObservedObject var search = NotesSearch.shared
     @Environment(\.compactNotch) private var compact
 
     private var text: Binding<String> {
@@ -136,10 +137,16 @@ struct NotesView: View {
                 .help("Добавить заметку")
             }
 
+            searchField
+
             ScrollView {
                 VStack(spacing: 3) {
-                    ForEach(store.notes) { note in
-                        noteRow(note)
+                    if search.hits.isEmpty && search.status.isEmpty {
+                        ForEach(store.notes) { note in
+                            noteRow(note)
+                        }
+                    } else {
+                        searchResults
                     }
                 }
             }
@@ -151,6 +158,84 @@ struct NotesView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .controlSize(.mini)
+        }
+    }
+
+    private var searchField: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "sparkle.magnifyingglass")
+                .font(.system(size: 9))
+                .foregroundStyle(Theme.faint)
+            TextField("Найти по смыслу…", text: $search.query)
+                .textFieldStyle(.plain)
+                .font(.system(size: 9.5))
+                .onSubmit { search.search() }
+            if search.busy {
+                ProgressView().controlSize(.mini).scaleEffect(0.6)
+            } else if !search.query.isEmpty {
+                Button { search.clear() } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 9))
+                        .foregroundStyle(Theme.faint)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 4)
+        .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Color.white.opacity(0.06)))
+        .help("Enter — найти заметки по смыслу, а не по словам (локально, через Ollama)")
+    }
+
+    @ViewBuilder private var searchResults: some View {
+        if !search.status.isEmpty {
+            Text(search.status)
+                .font(.system(size: 8.5))
+                .foregroundStyle(Theme.faint)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        if !search.answer.isEmpty {
+            Text(search.answer)
+                .font(.system(size: 9))
+                .foregroundStyle(Theme.text)
+                .textSelection(.enabled)
+                .padding(6)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Theme.accent.opacity(0.14)))
+        }
+        ForEach(search.hits) { hit in
+            Button {
+                store.select(hit.noteID)
+            } label: {
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack {
+                        Text(hit.title)
+                            .font(.system(size: 9.5, weight: .semibold))
+                            .foregroundStyle(hit.noteID == store.selected ? Theme.text : Theme.dim)
+                            .lineLimit(1)
+                        Spacer()
+                        Text("\(Int(hit.score * 100))%")
+                            .font(.system(size: 7.5))
+                            .foregroundStyle(Theme.faint)
+                    }
+                    Text(hit.snippet)
+                        .font(.system(size: 8))
+                        .foregroundStyle(Theme.faint)
+                        .lineLimit(2)
+                }
+                .padding(.horizontal, 7)
+                .padding(.vertical, 5)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(hit.noteID == store.selected ? Color.white.opacity(0.10) : Color.white.opacity(0.04)))
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+        if !search.hits.isEmpty && search.answer.isEmpty {
+            Button("✨ Ответить по заметкам") { search.ask() }
+                .controlSize(.mini)
+                .disabled(search.busy)
         }
     }
 

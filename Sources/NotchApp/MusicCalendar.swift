@@ -31,63 +31,6 @@ enum Automation {
     }
 }
 
-/// Управление браузером клавишами YouTube (k — пауза, j/l — ±10 с).
-/// Нужен «Универсальный доступ»; фокус кратко уходит в браузер и возвращается.
-enum MediaKeys {
-    static func send(bundleID: String, key: CGKeyCode) -> Bool {
-        guard AXWindow.trusted else {
-            AXWindow.requestOnce()
-            return false
-        }
-        guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first else {
-            return false
-        }
-        let previous = NSWorkspace.shared.frontmostApplication
-        app.activate(options: [.activateIgnoringOtherApps])
-        usleep(160_000)
-
-        // Если фокус в адресной строке/поле — не печатаем туда "k/j/l"
-        if focusIsText() {
-            if let previous, previous.bundleIdentifier != bundleID {
-                previous.activate(options: [.activateIgnoringOtherApps])
-            }
-            return false
-        }
-
-        let source = CGEventSource(stateID: .hidSystemState)
-        CGEvent(keyboardEventSource: source, virtualKey: key, keyDown: true)?.post(tap: .cghidEventTap)
-        usleep(30_000)
-        CGEvent(keyboardEventSource: source, virtualKey: key, keyDown: false)?.post(tap: .cghidEventTap)
-        usleep(110_000)
-        if let previous, previous.bundleIdentifier != bundleID {
-            previous.activate(options: [.activateIgnoringOtherApps])
-        }
-        return true
-    }
-
-    private static func focusIsText() -> Bool {
-        let system = AXUIElementCreateSystemWide()
-        var focused: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString,
-                                            &focused) == .success,
-              let focused else { return false }
-        let element = focused as! AXUIElement
-        var role: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &role) == .success else {
-            return false
-        }
-        let name = (role as? String) ?? ""
-        return name == "AXTextField" || name == "AXTextArea" || name == "AXComboBox"
-    }
-
-    static func key(for command: String) -> CGKeyCode {
-        switch command {
-        case "playpause": return 40   // k
-        case "previous track": return 38 // j
-        default: return 37            // l
-        }
-    }
-}
 
 /// Чтение заголовка окна браузера через Accessibility — нужно для Firefox,
 /// у которого нет AppleScript-доступа к вкладкам.
@@ -168,74 +111,134 @@ struct MusicTrack {
     var browserBundle: String? = nil
 }
 
-/// Доступ к системному «Сейчас играет» через MediaRemote:
-/// так видны видео из браузера и любые плееры, которые публикуют трек.
+/// «Сейчас играет» через помощника внутри /usr/bin/perl (приём из Cyclop, MIT).
+/// С macOS 15.4 система отдаёт трек только доверенным процессам; perl — системный и
+/// доверенный, поэтому помощник видит любой плеер (Яндекс Музыка, Firefox, Chrome,
+/// Safari, Telegram…) и управляет им без переключения окон.
 final class SystemNowPlaying {
-    typealias InfoFn = @convention(c) (DispatchQueue, @escaping ([String: Any]) -> Void) -> Void
-    typealias SendFn = @convention(c) (Int32, NSDictionary?) -> Bool
-
     static let shared = SystemNowPlaying()
-    private var infoFn: InfoFn?
-    private var sendFn: SendFn?
 
-    private init() {
-        guard let h = dlopen("/System/Library/PrivateFrameworks/MediaRemote.framework/MediaRemote",
-                             RTLD_LAZY) else { return }
-        if let s = dlsym(h, "MRMediaRemoteGetNowPlayingInfo") {
-            infoFn = unsafeBitCast(s, to: InfoFn.self)
-        }
-        if let s = dlsym(h, "MRMediaRemoteSendCommand") {
-            sendFn = unsafeBitCast(s, to: SendFn.self)
-        }
+    private var process: Process?
+    private var input: FileHandle?
+    private var bytes: [UInt8] = []
+    private let lock = NSLock()
+    private var latest: [String: Any] = [:]
+    private var art: NSImage?
+    private var available = false
+    private var restarts = 0
+
+    private init() {}
+
+    var isAvailable: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return available
     }
 
+    /// Какие команды плеер принимает сейчас (0 — пуск, 1 — пауза, 4 — следующий, 5 — предыдущий)
+    var commands: [Int]? {
+        lock.lock(); defer { lock.unlock() }
+        return (latest["commands"] as? [NSNumber])?.map { $0.intValue }
+    }
+
+    private var dylibPath: String? {
+        let p = Bundle.main.bundleURL.appendingPathComponent("Contents/Resources/libnotchmedia.dylib").path
+        return FileManager.default.fileExists(atPath: p) ? p : nil
+    }
+
+    func start() {
+        guard process == nil, let lib = dylibPath,
+              FileManager.default.isExecutableFile(atPath: "/usr/bin/perl") else { return }
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/perl")
+        p.arguments = ["-e", "use DynaLoader; DynaLoader::dl_load_file($ARGV[0], 0x01) or die; while (1) { sleep 3600; }", lib]
+        let out = Pipe(), inp = Pipe()
+        p.standardOutput = out
+        p.standardInput = inp
+        p.standardError = FileHandle.nullDevice
+        out.fileHandleForReading.readabilityHandler = { [weak self] h in
+            let d = h.availableData
+            guard !d.isEmpty else { h.readabilityHandler = nil; return }
+            self?.consume(d)
+        }
+        p.terminationHandler = { [weak self] _ in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.lock.lock(); self.available = false; self.lock.unlock()
+                self.process = nil
+                self.input = nil
+                self.restarts += 1
+                if self.restarts <= 30 {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 3) { self.start() }
+                }
+            }
+        }
+        do { try p.run() } catch { return }
+        process = p
+        input = inp.fileHandleForWriting
+    }
+
+    func send(_ line: String) {
+        if process == nil { start() }
+        try? input?.write(contentsOf: Data((line + "\n").utf8))
+    }
+
+    func refresh() { send("get") }
+
+    func seek(to seconds: Double) { send("seek \(max(0, seconds))") }
+
+    /// Старый формат команд: 2 — пуск/пауза, 4 — следующий, 5 — предыдущий
     func command(_ c: Int32) {
-        _ = sendFn?(c, nil)
+        if c == 2 {
+            send((current()?.playing ?? false) ? "cmd 1" : "cmd 0")
+        } else {
+            send("cmd \(c)")
+        }
     }
 
     func fetch(_ done: @escaping (MusicTrack?) -> Void) {
-        guard let fn = infoFn else { done(nil); return }
-        var finished = false
-        let lock = NSLock()
-        let finish: (MusicTrack?) -> Void = { track in
-            lock.lock()
-            if finished { lock.unlock(); return }
-            finished = true
-            lock.unlock()
-            DispatchQueue.main.async { done(track) }
-        }
-        fn(DispatchQueue.global(qos: .utility)) { info in
-            guard !info.isEmpty else { finish(nil); return }
-            let title = info["kMRMediaRemoteNowPlayingInfoTitle"] as? String ?? ""
-            guard !title.isEmpty else { finish(nil); return }
-            let artist = info["kMRMediaRemoteNowPlayingInfoArtist"] as? String ?? ""
-            let rate = (info["kMRMediaRemoteNowPlayingInfoPlaybackRate"] as? NSNumber)?.doubleValue ?? 0
-            let duration = (info["kMRMediaRemoteNowPlayingInfoDuration"] as? NSNumber)?.doubleValue ?? 0
-            let elapsed = (info["kMRMediaRemoteNowPlayingInfoElapsedTime"] as? NSNumber)?.doubleValue ?? 0
-            let bundle = info["kMRMediaRemoteNowPlayingInfoClientBundleIdentifier"] as? String ?? ""
-            var art: NSImage?
-            if let data = info["kMRMediaRemoteNowPlayingInfoArtworkData"] as? Data {
+        refresh()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { done(self.current()) }
+    }
+
+    private func consume(_ d: Data) {
+        lock.lock(); defer { lock.unlock() }
+        bytes.append(contentsOf: d)
+        while let nl = bytes.firstIndex(of: 0x0A) {
+            let line = Data(bytes[0..<nl])
+            bytes.removeFirst(nl + 1)
+            guard let obj = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else { continue }
+            if obj["error"] != nil { available = false; continue }
+            available = true
+            if let b64 = obj["artwork"] as? String, let data = Data(base64Encoded: b64) {
                 art = NSImage(data: data)
             }
-            let appName: String = {
-                switch bundle {
-                case "com.apple.Music": return "Music"
-                case "com.spotify.client": return "Spotify"
-                case "com.google.Chrome": return "Chrome"
-                case "com.apple.Safari": return "Safari"
-                case "com.microsoft.edgemac": return "Edge"
-                case "org.mozilla.firefox": return "Firefox"
-                case "com.apple.QuickTimePlayerX": return "QuickTime"
-                case "io.videolan.VLC": return "VLC"
-                default: return bundle.isEmpty ? "Система" : bundle
-                }
-            }()
-            finish(MusicTrack(title: title, artist: artist, playing: rate > 0,
-                              position: elapsed, duration: duration,
-                              app: appName, system: true, artwork: art))
+            if ((obj["title"] as? String) ?? "").isEmpty { art = nil }
+            latest = obj
         }
-        // MediaRemote иногда отвечает медленно на холодную — даём ему время
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { finish(nil) }
+        if bytes.count > 4_000_000 { bytes.removeAll() }
+    }
+
+    func current() -> MusicTrack? {
+        lock.lock()
+        let info = latest
+        let image = art
+        lock.unlock()
+        let title = (info["title"] as? String) ?? ""
+        guard !title.isEmpty else { return nil }
+        let playing = (info["playing"] as? Bool) ?? false
+        let rate = (info["rate"] as? NSNumber)?.doubleValue ?? 0
+        let duration = (info["duration"] as? NSNumber)?.doubleValue ?? 0
+        var elapsed = (info["elapsed"] as? NSNumber)?.doubleValue ?? 0
+        let stamp = (info["timestamp"] as? NSNumber)?.doubleValue ?? 0
+        if playing && stamp > 0 {
+            elapsed += (Date().timeIntervalSince1970 - stamp) * (rate > 0 ? rate : 1)
+        }
+        if duration > 0 { elapsed = min(elapsed, duration) }
+        let pid = (info["pid"] as? NSNumber)?.int32Value ?? 0
+        let owner = pid > 0 ? NSRunningApplication(processIdentifier: pid) : nil
+        return MusicTrack(title: title, artist: (info["artist"] as? String) ?? "",
+                          playing: playing, position: max(0, elapsed), duration: duration,
+                          app: owner?.localizedName ?? "Система", system: true, artwork: image)
     }
 }
 
@@ -278,6 +281,17 @@ final class MusicService: ObservableObject {
     }
 
     func update() {
+        // Главный источник — помощник «Сейчас играет»: видит любой плеер и браузер,
+        // кнопки работают без переключения окон. Остальные способы — запасные.
+        let helper = SystemNowPlaying.shared
+        helper.refresh()
+        if let t = helper.current() {
+            misses = 0
+            hint = nil
+            debug = "helper"
+            apply(t)
+            return
+        }
         guard !updating else { return }
         updating = true
         debug = "start"
@@ -645,6 +659,23 @@ final class MusicService: ObservableObject {
     }
 
     func command(_ cmd: String) {
+        if system, SystemNowPlaying.shared.isAvailable {
+            let helper = SystemNowPlaying.shared
+            let cmds = helper.commands
+            switch cmd {
+            case "playpause":
+                helper.send(playing ? "cmd 1" : "cmd 0")
+                playing.toggle()
+            case "next track":
+                if cmds?.contains(4) ?? true { helper.send("cmd 4") } else { helper.seek(to: position + 10) }
+            case "previous track":
+                if cmds?.contains(5) ?? true { helper.send("cmd 5") } else { helper.seek(to: max(0, position - 10)) }
+            default:
+                return
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { self.update() }
+            return
+        }
         if browser {
             // Firefox не даёт управлять видео снаружи: любые клавиши требуют
             // активации браузера, а этого делать нельзя — фокус остаётся у тебя.
@@ -938,6 +969,25 @@ final class CalendarService: ObservableObject {
         events = store.events(matching: pred).sorted { $0.startDate < $1.startDate }
     }
 
+    /// Быстро добавить событие (с напоминанием за 15 минут)
+    func add(title: String, start: Date, minutes: Int, remind: Bool) -> String? {
+        guard authorized else { return "Нет доступа к календарю" }
+        guard let calendar = store.defaultCalendarForNewEvents else { return "Нет календаря по умолчанию" }
+        let e = EKEvent(eventStore: store)
+        e.title = title
+        e.startDate = start
+        e.endDate = start.addingTimeInterval(TimeInterval(minutes * 60))
+        e.calendar = calendar
+        if remind { e.addAlarm(EKAlarm(relativeOffset: -15 * 60)) }
+        do {
+            try store.save(e, span: .thisEvent)
+            load(month: start)
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
     func events(on day: Date) -> [EKEvent] {
         events.filter { Calendar.current.isDate($0.startDate, inSameDayAs: day) }
     }
@@ -947,6 +997,10 @@ struct CalendarView: View {
     @ObservedObject var cal = CalendarService.shared
     @State private var month = Date()
     @State private var selected = Date()
+    @State private var newTitle = ""
+    @State private var newTime = Calendar.current.date(bySettingHour: 10, minute: 0, second: 0, of: Date()) ?? Date()
+    @State private var newMinutes = 60
+    @State private var addResult: String?
 
     private var c: Calendar {
         var c = Calendar.current
@@ -1021,11 +1075,48 @@ struct CalendarView: View {
         }
     }
 
+    private func addEvent() {
+        let title = newTitle.trimmingCharacters(in: .whitespaces)
+        guard !title.isEmpty else { return }
+        let c = Calendar.current
+        let t = c.dateComponents([.hour, .minute], from: newTime)
+        let start = c.date(bySettingHour: t.hour ?? 10, minute: t.minute ?? 0, second: 0, of: selected) ?? selected
+        if let err = cal.add(title: title, start: start, minutes: newMinutes, remind: true) {
+            addResult = "Не добавлено: \(err)"
+        } else {
+            addResult = "✓ Добавлено, напомню за 15 минут"
+            newTitle = ""
+        }
+    }
+
     private var dayList: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(selected.formatted(.dateTime.day().month(.wide).weekday(.wide)))
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(Theme.text)
+            // Быстрое добавление события в выбранный день
+            HStack(spacing: 4) {
+                TextField("Новое событие…", text: $newTitle)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit { addEvent() }
+                DatePicker("", selection: $newTime, displayedComponents: .hourAndMinute)
+                    .labelsHidden()
+                    .frame(width: 64)
+                Picker("", selection: $newMinutes) {
+                    Text("30 мин").tag(30)
+                    Text("1 ч").tag(60)
+                    Text("2 ч").tag(120)
+                }
+                .labelsHidden()
+                .frame(width: 66)
+                Button("Добавить") { addEvent() }
+                    .disabled(newTitle.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+            .controlSize(.small)
+            .font(.system(size: 10.5))
+            if let r = addResult {
+                Text(r).font(.system(size: 9)).foregroundStyle(r.hasPrefix("✓") ? Theme.green : Theme.red)
+            }
             let list = cal.events(on: selected)
             if list.isEmpty {
                 Text("Событий нет").font(.system(size: 10.5)).foregroundStyle(Theme.faint)

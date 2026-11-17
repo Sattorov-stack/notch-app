@@ -9,10 +9,11 @@ final class SectionWindows: NSObject, NSWindowDelegate {
     func open(_ tab: Tab) {
         if let w = windows[tab.rawValue] {
             w.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
+            w.orderFrontRegardless()
+            NSApp.activate()
             return
         }
-        let w = NSWindow(contentRect: NSRect(origin: .zero, size: tab.windowSize),
+        let w = EditingWindow(contentRect: NSRect(origin: .zero, size: tab.windowSize),
                          styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
                          backing: .buffered, defer: false)
         w.title = tab.title
@@ -36,9 +37,12 @@ final class SectionWindows: NSObject, NSWindowDelegate {
         w.center()
         w.makeKeyAndOrderFront(nil)
         windows[tab.rawValue] = w
-        NSApp.activate(ignoringOtherApps: true)
+        w.orderFrontRegardless()
+        NSApp.activate()
         NotchState.shared.onExpandRequest?(false)
     }
+
+    func isOpen(_ tab: Tab) -> Bool { windows[tab.rawValue]?.isVisible ?? false }
 
     func close(_ tab: Tab) {
         windows[tab.rawValue]?.close()
@@ -98,7 +102,11 @@ struct SectionBody: View {
         case .shelf: ShelfView()
         case .calendar: CalendarView()
         case .pets: PetsView()
+        case .windows: WindowsView()
         case .tools: ToolsView()
+        case .focus: PomodoroView()
+        case .servers: ServersView()
+        case .system: SystemView()
         }
     }
 }

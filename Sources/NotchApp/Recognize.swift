@@ -96,6 +96,65 @@ final class RecognizeService: ObservableObject {
         }
     }
 
+    // MARK: Скриншот → объяснение ИИ
+
+    func explainScreenshot(delay: Int = 0) {
+        screenAllowed = CGPreflightScreenCaptureAccess()
+        if !screenAllowed {
+            status = "Нужно разрешение «Запись экрана»: Настройки → Конфиденциальность → Запись экрана"
+            CGRequestScreenCaptureAccess()
+            screenAllowed = CGPreflightScreenCaptureAccess()
+        }
+        let run = { [weak self] in
+            guard let self else { return }
+            let path = self.tempURL("png").path
+            self.busy = true
+            self.status = "Выдели область — ИИ объяснит, что на ней (Esc — отмена)"
+            DispatchQueue.global(qos: .userInitiated).async {
+                let p = Process()
+                p.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+                p.arguments = ["-i", "-x", path]
+                do { try p.run(); p.waitUntilExit() } catch {}
+
+                var text = ""
+                var png: Data?
+                if let img = NSImage(contentsOfFile: path),
+                   let cg = img.cgImage(forProposedRect: nil, context: nil, hints: nil) {
+                    text = self.ocr(cg)
+                    png = try? Data(contentsOf: URL(fileURLWithPath: path))
+                }
+                try? FileManager.default.removeItem(atPath: path)
+                DispatchQueue.main.async {
+                    guard let png else {
+                        self.busy = false
+                        self.status = "Снимок отменён"
+                        return
+                    }
+                    self.status = text.isEmpty ? "✨ Текста нет — смотрю на картинку (это дольше)…" : "✨ ИИ разбирается…"
+                    Task {
+                        let answer = await AIExplain.explain(text: text, image: text.isEmpty ? png : nil)
+                        await MainActor.run {
+                            self.busy = false
+                            if let answer {
+                                self.result = text.isEmpty ? answer : answer + "\n\n— Текст со скриншота —\n" + text
+                                self.status = "✨ Объяснение готово"
+                            } else {
+                                self.result = text
+                                self.status = text.isEmpty ? "ИИ недоступен — запусти Ollama" : "ИИ недоступен — показан только текст"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if delay > 0 {
+            status = "Скриншот через \(delay) с — переключись на нужное окно"
+            DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(delay), execute: run)
+        } else {
+            run()
+        }
+    }
+
     // MARK: Картинка из буфера / файла
 
     func ocrPasteboard() {
@@ -338,6 +397,22 @@ struct RecognizeView: View {
                     Button("Сразу") { r.screenshot() }
                     Button("Через 3 секунды") { r.screenshot(delay: 3) }
                     Button("Через 5 секунд") { r.screenshot(delay: 5) }
+                } label: {
+                    Image(systemName: "clock")
+                        .font(.system(size: 9))
+                        .foregroundStyle(Theme.dim)
+                }
+                .menuStyle(.borderlessButton)
+                .frame(width: 20)
+            }
+
+            actionRow("Скриншот → объяснить", icon: "sparkles", tint: Theme.accentSoft) {
+                r.explainScreenshot()
+            } trailing: {
+                Menu {
+                    Button("Сразу") { r.explainScreenshot() }
+                    Button("Через 3 секунды") { r.explainScreenshot(delay: 3) }
+                    Button("Через 5 секунд") { r.explainScreenshot(delay: 5) }
                 } label: {
                     Image(systemName: "clock")
                         .font(.system(size: 9))

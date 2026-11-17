@@ -9,7 +9,7 @@ struct HomeView: View {
         VStack(spacing: 8) {
             HStack(spacing: 8) {
                 HomeMusicCard()
-                HomeAgentsCard()
+                HomeServersCard()
                     .frame(width: 190)
             }
             .frame(maxHeight: .infinity)
@@ -186,66 +186,43 @@ private struct HomeMusicCard: View {
 
 // MARK: - Питомцы
 
-private struct HomeAgentsCard: View {
-    @ObservedObject var hub = AgentHub.shared
-
-    private var limitKeys: [String] {
-        hub.limits.keys.sorted().filter { hub.limits[$0] != nil }
-    }
+private struct HomeServersCard: View {
+    @ObservedObject var svc = ServersService.shared
 
     var body: some View {
         GlassCard(padding: 9) {
-            VStack(alignment: .leading, spacing: 7) {
+            VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 6) {
-                    Image(systemName: "pawprint.fill")
+                    Image(systemName: "server.rack")
                         .font(.system(size: 10))
                         .foregroundStyle(Theme.accent)
-                    Text("ПИТОМЦЫ")
+                    Text("СЕРВЕРЫ")
                         .font(.system(size: 9, weight: .semibold))
                         .tracking(0.6)
                         .foregroundStyle(Theme.dim)
                     Spacer()
-                    ServerDot(ok: hub.serverOK)
-                    Text(":\(String(AgentHub.port))")
-                        .font(.system(size: 8.5))
-                        .foregroundStyle(Theme.faint)
                 }
-
-                HStack(spacing: 5) {
-                    ForEach(hub.agents.prefix(4), id: \.self) { a in
-                        AgentChip(agent: a)
-                    }
-                    if hub.agents.count > 4 {
-                        Text("+\(hub.agents.count - 4)")
-                            .font(.system(size: 9, weight: .medium))
-                            .foregroundStyle(Theme.faint)
-                    }
-                    Spacer(minLength: 0)
+                if svc.servers.isEmpty {
+                    Text("Серверов пока нет").font(.system(size: 9.5)).foregroundStyle(Theme.faint)
                 }
-
+                ForEach(Array(svc.servers.prefix(3))) { s in
+                    let st = svc.status[s.id]
+                    let total = st?.procs.count ?? 0
+                    let ok = st?.procs.filter { $0.ok }.count ?? 0
+                    let color: Color = st == nil ? Theme.faint
+                        : (st?.error != nil ? Theme.red : (ok == total ? Theme.green : Theme.orange))
+                    HStack(spacing: 6) {
+                        Circle().fill(color).frame(width: 6, height: 6)
+                        Text(s.name).font(.system(size: 10, weight: .medium)).foregroundStyle(Theme.text).lineLimit(1)
+                        Spacer(minLength: 0)
+                        Text(st == nil ? "проверяю…" : (st?.error != nil ? "нет связи" : "\(ok)/\(total) · ОЗУ \(st?.meta.memPct ?? 0)%"))
+                            .font(.system(size: 9)).foregroundStyle(Theme.dim).lineLimit(1)
+                    }
+                }
                 Spacer(minLength: 0)
-
-                if limitKeys.isEmpty {
-                    Text("Лимиты появятся, когда агент пришлёт remaining")
-                        .font(.system(size: 9.5))
-                        .foregroundStyle(Theme.faint)
-                        .lineLimit(2)
-                } else {
-                    Text(limitKeys.map { key in
-                        let pct = Int(hub.limits[key]?.remaining ?? 0)
-                        return hub.displayName(for: key) + " " + String(pct) + "%"
-                    }.joined(separator: " · "))
-                        .font(.system(size: 8.5))
-                        .foregroundStyle(Theme.dim)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                Button {
-                    NotchState.shared.tab = .pets
-                } label: {
+                Button { NotchState.shared.tab = .servers } label: {
                     HStack(spacing: 3) {
-                        Text("Все питомцы")
+                        Text("Все серверы")
                         Image(systemName: "arrow.right")
                     }
                     .font(.system(size: 9.5, weight: .medium))
