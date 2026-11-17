@@ -1,6 +1,5 @@
 import SwiftUI
 import AppKit
-import EventKit
 
 // MARK: - Главный экран: всё важное в одном месте
 
@@ -15,7 +14,7 @@ struct HomeView: View {
             .frame(maxHeight: .infinity)
 
             HStack(spacing: 8) {
-                HomeCalendarCard()
+                HomeInternetCard()
                     .frame(width: 196)
                 HomeClipCard()
                 HomeShelfCard()
@@ -223,83 +222,6 @@ private struct HomeServersCard: View {
                 Button { NotchState.shared.tab = .servers } label: {
                     HStack(spacing: 3) {
                         Text("Все серверы")
-                        Image(systemName: "arrow.right")
-                    }
-                    .font(.system(size: 9.5, weight: .medium))
-                    .foregroundStyle(Theme.accentSoft)
-                }
-                .buttonStyle(.plain)
-            }
-        }
-    }
-}
-
-// MARK: - Календарь
-
-private struct HomeCalendarCard: View {
-    @ObservedObject var cal = CalendarService.shared
-
-    private var upcoming: [EKEvent] {
-        cal.events.filter { $0.endDate >= Date() }.prefix(2).map { $0 }
-    }
-
-    var body: some View {
-        GlassCard(padding: 9) {
-            VStack(alignment: .leading, spacing: 7) {
-                HStack(spacing: 6) {
-                    Image(systemName: "calendar")
-                        .font(.system(size: 10))
-                        .foregroundStyle(Theme.orange)
-                    Text("СЕГОДНЯ")
-                        .font(.system(size: 9, weight: .semibold))
-                        .tracking(0.6)
-                        .foregroundStyle(Theme.dim)
-                    Spacer()
-                    Text(Date().formatted(.dateTime.day().month(.abbreviated)))
-                        .font(.system(size: 9))
-                        .foregroundStyle(Theme.faint)
-                }
-
-                if !cal.authorized {
-                    Text("Нет доступа к Календарю")
-                        .font(.system(size: 11))
-                        .foregroundStyle(Theme.dim)
-                    Button("Разрешить") { cal.request() }
-                        .font(.system(size: 10))
-                        .controlSize(.small)
-                } else if upcoming.isEmpty {
-                    Text("Событий больше нет")
-                        .font(.system(size: 11))
-                        .foregroundStyle(Theme.faint)
-                    Spacer(minLength: 0)
-                } else {
-                    VStack(alignment: .leading, spacing: 6) {
-                        ForEach(upcoming, id: \.self) { e in
-                            HStack(spacing: 7) {
-                                RoundedRectangle(cornerRadius: 2)
-                                    .fill(Theme.orange.opacity(0.85))
-                                    .frame(width: 2.5, height: 22)
-                                VStack(alignment: .leading, spacing: 0) {
-                                    Text(e.isAllDay ? "весь день"
-                                         : e.startDate.formatted(date: .omitted, time: .shortened))
-                                        .font(.system(size: 9))
-                                        .foregroundStyle(Theme.faint)
-                                    Text(e.title ?? "")
-                                        .font(.system(size: 10.5, weight: .medium))
-                                        .foregroundStyle(Theme.text)
-                                        .lineLimit(1)
-                                }
-                                Spacer(minLength: 0)
-                            }
-                        }
-                    }
-                }
-                Spacer(minLength: 0)
-                Button {
-                    NotchState.shared.tab = .calendar
-                } label: {
-                    HStack(spacing: 3) {
-                        Text("Календарь")
                         Image(systemName: "arrow.right")
                     }
                     .font(.system(size: 9.5, weight: .medium))

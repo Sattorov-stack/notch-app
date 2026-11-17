@@ -357,9 +357,6 @@ final class AgentHub: ObservableObject {
                      ["ok": $0.ok, "ageMin": Int(Date().timeIntervalSince($0.time) / 60), "sizeKB": $0.size / 1024] as [String: Any]
                  },
                  "telegram": TelegramNotifier.shared.isReady,
-                 "pomodoro": ["running": PomodoroService.shared.running,
-                              "left": PomodoroService.shared.display,
-                              "phase": PomodoroService.shared.title],
                  "system": ["cpu": Int(SystemMonitor.shared.cpu * 100),
                             "battery": SystemMonitor.shared.battery?.percent ?? -1],
                  "servers": ServersService.shared.servers.map { srv -> [String: Any] in

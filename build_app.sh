@@ -41,8 +41,6 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>CFBundleVersion</key><string>2</string>
     <key>LSMinimumSystemVersion</key><string>15.0</string>
     <key>LSUIElement</key><true/>
-    <key>NSCalendarsFullAccessUsageDescription</key><string>Показывать твои события в календаре чёлки.</string>
-    <key>NSCalendarsUsageDescription</key><string>Показывать твои события в календаре чёлки.</string>
     <key>NSCameraUsageDescription</key><string>Показывать тебя в круглом «зеркале» под чёлкой.</string>
     <key>NSMicrophoneUsageDescription</key><string>Записать голос, чтобы превратить его в текст.</string>
     <key>NSSpeechRecognitionUsageDescription</key><string>Превращать голос, аудио и видео в текст.</string>

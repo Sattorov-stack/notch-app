@@ -18,7 +18,6 @@ cd ~/Downloads/NotchApp
 | ⌃⌥N | открыть/закрыть меню (можно сразу печатать) |
 | ⌃⌥T | скриншот → текст в буфер |
 | ⌃⌥C | пипетка: цвет с экрана → HEX в буфер |
-| ⌃⌥P | Помодоро: старт/пауза |
 | Esc | закрыть меню |
 | ⌘1…⌘0 | первые десять разделов |
 
@@ -56,7 +55,6 @@ A menu that lives under the MacBook notch: hover to open it, move the mouse away
 | **Recognize text** | Screenshot (immediately or after 3/5 s), clipboard image, dropped image, voice, or audio/video to text. Vision and Speech run on device; the result goes straight to the clipboard |
 | **Clipboard** | Text **and images** (preview, copy back), search, pin, delete. Up to 40 items: the 41st replaces the oldest (pinned items stay). Passwords and transient data are never stored |
 | **Shelf** | Drop a file onto the notch to keep it there; open it, reveal it in Finder, or remove it |
-| **Calendar** | Events from macOS Calendar, a month grid and a day list |
 | **Pets and limits** | Pets for every AI app found on the Mac. Each tile shows a status and its own usage limit; **click a tile to set the limit manually**, use "+" to add your own agent, and see Claude Code usage |
 | **Tools** | Lock the keyboard for cleaning, keep awake, run with the lid closed, launch at login |
 
@@ -82,7 +80,6 @@ Build notes:
 | Keyboard lock | Accessibility |
 | Screenshot to text | Screen Recording |
 | Voice to text | Microphone, Speech Recognition |
-| Calendar | Calendars |
 | Music and QuickTime | Automation (Music, Spotify, QuickTime Player) |
 | YouTube in a browser tab | Automation (Google Chrome, Safari, Firefox) |
 
@@ -127,7 +124,7 @@ curl 127.0.0.1:47321/music           # force-refresh Now Playing
 curl -X POST 127.0.0.1:47321/open -d '{"tab":"pets"}'   # open a section in a window
 ```
 
-Sections for `/open`: `home`, `music`, `notes`, `script`, `translate`, `recognize`, `clipboard`, `shelf`, `calendar`, `pets`, `tools`.
+Sections for `/open`: `home`, `music`, `notes`, `script`, `translate`, `recognize`, `clipboard`, `shelf`, `system`, `pets`, `tools`.
 
 ### Claude Code
 

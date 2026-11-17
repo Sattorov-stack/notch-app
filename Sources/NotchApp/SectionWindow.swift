@@ -100,11 +100,9 @@ struct SectionBody: View {
         case .recognize: RecognizeView()
         case .clipboard: ClipboardView()
         case .shelf: ShelfView()
-        case .calendar: CalendarView()
         case .pets: PetsView()
         case .windows: WindowsView()
         case .tools: ToolsView()
-        case .focus: PomodoroView()
         case .servers: ServersView()
         case .system: SystemView()
         }

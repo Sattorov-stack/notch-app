@@ -268,9 +268,6 @@ final class NotchController: NSObject {
         HotKeys.shared.register(id: 3, keyCode: kVK_ANSI_C, modifiers: mods) {
             ColorPickService.shared.pick()
         }
-        HotKeys.shared.register(id: 4, keyCode: kVK_ANSI_P, modifiers: mods) {
-            PomodoroService.shared.toggle()
-        }
         HotKeys.shared.register(id: 5, keyCode: kVK_ANSI_M, modifiers: mods) {
             CameraMirror.shared.toggle()
         }
@@ -376,6 +373,7 @@ AgentHub.shared.start()
 SleepGuard.shared.refresh()
 SystemNowPlaying.shared.start()
 SystemMonitor.shared.start()
+InternetWatch.shared.start()
 ServersService.shared.start()
 SnapController.shared.start()
 BackupMonitor.shared.start()

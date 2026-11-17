@@ -26,13 +26,13 @@ enum Disk {
 // MARK: - Вкладки
 
 enum Tab: String, CaseIterable, Identifiable {
-    case home, music, notes, script, translate, focus, servers
-    case recognize, clipboard, shelf, calendar, system, pets, windows, tools
+    case home, music, notes, script, translate, servers
+    case recognize, clipboard, shelf, system, pets, windows, tools
     var id: String { rawValue }
 
-    /// Два рейла по 7 иконок — влезают даже в самую низкую панель.
-    static let leftRail: [Tab] = [.home, .music, .notes, .script, .translate, .focus, .servers]
-    static let rightRail: [Tab] = [.recognize, .clipboard, .shelf, .calendar, .system, .windows, .tools]
+    /// Два рейла по 6 иконок — влезают даже в самую низкую панель.
+    static let leftRail: [Tab] = [.home, .music, .notes, .script, .translate, .servers]
+    static let rightRail: [Tab] = [.recognize, .clipboard, .shelf, .system, .windows, .tools]
 
     var icon: String {
         switch self {
@@ -41,12 +41,10 @@ enum Tab: String, CaseIterable, Identifiable {
         case .notes: return "note.text"
         case .script: return "text.alignleft"
         case .translate: return "character.bubble"
-        case .focus: return "timer"
         case .servers: return "server.rack"
         case .recognize: return "text.viewfinder"
         case .clipboard: return "doc.on.clipboard"
         case .shelf: return "tray.full"
-        case .calendar: return "calendar"
         case .system: return "cpu"
         case .pets: return "pawprint"
         case .windows: return "rectangle.split.3x1"
@@ -61,12 +59,10 @@ enum Tab: String, CaseIterable, Identifiable {
         case .notes: return "Заметки"
         case .script: return "Сценарий"
         case .translate: return "Переводчик"
-        case .focus: return "Помодоро"
         case .servers: return "Серверы pm2"
         case .recognize: return "Распознать текст"
         case .clipboard: return "Буфер обмена"
         case .shelf: return "Полка"
-        case .calendar: return "Календарь"
         case .system: return "Система"
         case .pets: return "Питомцы и лимиты"
         case .windows: return "Окна"
@@ -81,12 +77,10 @@ enum Tab: String, CaseIterable, Identifiable {
         case .notes: return "Без автоисправлений, подчёркиваний и умных кавычек"
         case .script: return "Суфлёр, скрытый от записи и демонстрации экрана"
         case .translate: return "Офлайн-перевод Apple, без запросов к серверу"
-        case .focus: return "Работа и перерывы по таймеру · ⌃⌥P"
         case .servers: return "Процессы pm2 на твоих VPS, раз в минуту"
         case .recognize: return "Скриншот, голос и видео → текст · ⌃⌥T"
         case .clipboard: return "История копирований с поиском и закреплением"
         case .shelf: return "Перетащи файл в чёлку — он останется здесь"
-        case .calendar: return "События из Календаря macOS"
         case .system: return "Процессор, память, батарея, диск и интернет"
         case .pets: return "Питомцы ИИ-агентов и остатки лимитов"
         case .windows: return "Раскладки окон: потяни окно к чёлке · ⌃⌥←→↑↓"
@@ -102,12 +96,10 @@ enum Tab: String, CaseIterable, Identifiable {
         case .notes: return 310
         case .script: return 292
         case .translate: return 296
-        case .focus: return 300
         case .servers: return 380
         case .recognize: return 320
         case .clipboard: return 310
         case .shelf: return 278
-        case .calendar: return 340
         case .system: return 336
         case .pets: return 340
         case .windows: return 322
@@ -122,12 +114,10 @@ enum Tab: String, CaseIterable, Identifiable {
         case .notes: return CGSize(width: 620, height: 560)
         case .script: return CGSize(width: 820, height: 560)
         case .translate: return CGSize(width: 620, height: 400)
-        case .focus: return CGSize(width: 560, height: 360)
         case .servers: return CGSize(width: 780, height: 620)
         case .recognize: return CGSize(width: 780, height: 540)
         case .clipboard: return CGSize(width: 520, height: 620)
         case .shelf: return CGSize(width: 640, height: 440)
-        case .calendar: return CGSize(width: 680, height: 540)
         case .system: return CGSize(width: 680, height: 420)
         case .pets: return CGSize(width: 700, height: 560)
         case .windows: return CGSize(width: 560, height: 380)

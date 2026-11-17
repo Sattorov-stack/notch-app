@@ -458,6 +458,16 @@ enum NetSelfTest {
             print("ℹ️ Wi‑Fi не подключён — живую часть пропускаю")
         }
 
+        // Сторож интернета: тот же запрос, что раз в 20 с
+        let sem = DispatchSemaphore(value: 0)
+        var watchOK = false
+        URLSession.shared.dataTask(with: URL(string: "https://captive.apple.com/hotspot-detect.html")!) { d, r, _ in
+            watchOK = (r as? HTTPURLResponse)?.statusCode == 200 && String(decoding: d ?? Data(), as: UTF8.self).contains("Success")
+            sem.signal()
+        }.resume()
+        _ = sem.wait(timeout: .now() + 6)
+        check("сторож видит интернет", watchOK)
+
         // Живой замер (короткий), если попросили
         if CommandLine.arguments.contains("--live") {
             let out = NetworkMonitor.run("/usr/bin/networkQuality", ["-c", "-M", "10"])
@@ -468,5 +478,132 @@ enum NetSelfTest {
         }
         print(ok ? "Итог: всё верно" : "Итог: есть ошибки")
         return ok
+    }
+}
+
+// MARK: - Сторож: раз в 20 с проверяет, есть ли интернет, и предупреждает в чёлке
+
+final class InternetWatch: ObservableObject {
+    static let shared = InternetWatch()
+    @Published var online: Bool?          // nil — ещё не проверяли
+    @Published var pingMs: Int?
+    @Published var downSince: Date?
+
+    private var fails = 0
+    private var timer: Timer?
+    private let session: URLSession = {
+        let c = URLSessionConfiguration.ephemeral
+        c.timeoutIntervalForRequest = 5
+        c.requestCachePolicy = .reloadIgnoringLocalCacheData
+        return URLSession(configuration: c)
+    }()
+
+    func start() {
+        check()
+        timer = Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { [weak self] _ in self?.check() }
+    }
+
+    func check() {
+        var req = URLRequest(url: URL(string: "https://captive.apple.com/hotspot-detect.html")!)
+        req.httpMethod = "GET"
+        let t0 = Date()
+        session.dataTask(with: req) { [weak self] data, resp, _ in
+            let ok = (resp as? HTTPURLResponse)?.statusCode == 200
+                && String(decoding: data ?? Data(), as: UTF8.self).contains("Success")
+            let ms = Int(Date().timeIntervalSince(t0) * 1000)
+            DispatchQueue.main.async { self?.apply(ok: ok, ms: ms) }
+        }.resume()
+    }
+
+    private func apply(ok: Bool, ms: Int) {
+        if ok {
+            pingMs = ms
+            if online == false, let since = downSince {
+                let mins = max(1, Int(Date().timeIntervalSince(since) / 60))
+                NotchState.shared.showAlert(AlertItem(emoji: "🌐", title: "Интернет",
+                                                      text: "снова есть (не было ≈\(mins) мин)", kind: .done))
+            }
+            online = true
+            fails = 0
+            downSince = nil
+        } else {
+            fails += 1
+            pingMs = nil
+            // Два провала подряд (~20 с) — значит, правда пропал, а не случайная потеря
+            if fails == 2 {
+                online = false
+                downSince = Date().addingTimeInterval(-20)
+                let wifi = NetworkMonitor.readWiFi(macAX: false, sameChannel: nil)
+                NotchState.shared.showAlert(AlertItem(emoji: "📵", title: "Интернет",
+                                                      text: wifi == nil ? "пропал — Wi‑Fi не подключён"
+                                                                        : "пропал — Wi‑Fi есть, нет выхода в сеть",
+                                                      kind: .error))
+            }
+        }
+    }
+}
+
+// MARK: - Карточка на Главной
+
+struct HomeInternetCard: View {
+    @ObservedObject var n = NetworkMonitor.shared
+    @ObservedObject var watch = InternetWatch.shared
+
+    var body: some View {
+        GlassCard(padding: 9) {
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 6) {
+                    Image(systemName: watch.online == false ? "wifi.exclamationmark" : "wifi")
+                        .font(.system(size: 10))
+                        .foregroundStyle(watch.online == false ? Theme.red : Theme.accent)
+                    Text("ИНТЕРНЕТ")
+                        .font(.system(size: 9, weight: .semibold)).tracking(0.6)
+                        .foregroundStyle(Theme.dim)
+                    Spacer()
+                    if let p = watch.pingMs {
+                        Text("отклик \(p) мс").font(.system(size: 9))
+                            .foregroundStyle(p >= 300 ? Theme.orange : Theme.faint)
+                    }
+                }
+                if watch.online == false {
+                    Text("Нет интернета").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.red)
+                } else if let r = n.speed {
+                    HStack(spacing: 8) {
+                        Text("↓\(Int(r.down.rounded()))").font(.system(size: 15, weight: .bold, design: .rounded))
+                        Text("↑\(Int(r.up.rounded()))").font(.system(size: 15, weight: .bold, design: .rounded))
+                            .foregroundStyle(Theme.dim)
+                        Text("Мбит/с").font(.system(size: 9)).foregroundStyle(Theme.faint)
+                    }
+                    .monospacedDigit().foregroundStyle(Theme.text)
+                } else {
+                    Text("Скорость ещё не замеряли").font(.system(size: 10)).foregroundStyle(Theme.faint)
+                }
+                if let w = n.wifi {
+                    let sig = NetEval.signalText(w.rssi)
+                    HStack(spacing: 3) {
+                        Text("Wi‑Fi \(Int(w.rate)) Мбит/с ·")
+                        Text("сигнал \(sig.0)").foregroundStyle(sig.1)
+                    }
+                    .font(.system(size: 9.5)).foregroundStyle(Theme.dim).lineLimit(1)
+                }
+                Spacer(minLength: 0)
+                HStack(spacing: 8) {
+                    Button(n.testing ? "Замер…" : "Проверить") { n.runSpeedTest() }
+                        .disabled(n.testing)
+                        .font(.system(size: 9.5))
+                    Button {
+                        UserDefaults.standard.set("net", forKey: "systemMode")
+                        NotchState.shared.tab = .system
+                    } label: {
+                        HStack(spacing: 3) { Text("Подробно"); Image(systemName: "arrow.right") }
+                            .font(.system(size: 9.5, weight: .medium))
+                            .foregroundStyle(Theme.accentSoft)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .onAppear { n.appear() }
+        .onDisappear { n.disappear() }
     }
 }
