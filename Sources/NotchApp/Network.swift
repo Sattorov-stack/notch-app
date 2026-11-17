@@ -341,9 +341,15 @@ struct InternetView: View {
                         Text("· шум \(w.noise) · запас \(w.snr) дБ").foregroundStyle(Theme.dim)
                     }
                     .lineLimit(1).minimumScaleFactor(0.8)
-                    ProgressView(value: w.linkRatio)
-                        .tint(NetEval.wifiVerdict(w).1)
-                        .controlSize(.mini)
+                    GeometryReader { g in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(Color.white.opacity(0.10))
+                            Capsule().fill(NetEval.wifiVerdict(w).1)
+                                .frame(width: g.size.width * w.linkRatio)
+                        }
+                    }
+                    .frame(height: 4)
+                    .padding(.vertical, 2)
                     let v = NetEval.wifiVerdict(w)
                     Text(v.0).foregroundStyle(v.1)
                         .lineLimit(compact ? 4 : 6)
