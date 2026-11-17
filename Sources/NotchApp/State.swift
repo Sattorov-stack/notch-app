@@ -72,7 +72,7 @@ enum Tab: String, CaseIterable, Identifiable {
 
     var subtitle: String {
         switch self {
-        case .home: return "Главное под рукой — музыка, серверы, календарь и буфер"
+        case .home: return "Главное под рукой — музыка, серверы, интернет и буфер"
         case .music: return "Всё, что играет на Mac: плееры, браузеры, видео"
         case .notes: return "Без автоисправлений, подчёркиваний и умных кавычек"
         case .script: return "Суфлёр, скрытый от записи и демонстрации экрана"

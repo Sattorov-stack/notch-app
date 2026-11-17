@@ -4,7 +4,7 @@ import Carbon.HIToolbox
 /// Глобальные горячие клавиши через Carbon: работают из любого приложения
 /// и не требуют «Универсального доступа».
 ///   ⌃⌥N — открыть/закрыть меню, ⌃⌥T — текст со скриншота,
-///   ⌃⌥C — пипетка, ⌃⌥P — Помодоро старт/пауза.
+///   ⌃⌥C — пипетка.
 final class HotKeys {
     static let shared = HotKeys()
     private var refs: [EventHotKeyRef?] = []

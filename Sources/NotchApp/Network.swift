@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import CoreWLAN
 import Darwin
 
@@ -98,7 +99,7 @@ enum NetEval {
         if w.streams == 1 && w.perStreamMax >= 200 { hints.append("подключено одним потоком") }
         if w.macSupportsAX && (w.phyKey == "ac" || w.phyKey == "n") { hints.append("Мак умеет Wi‑Fi 6 — с роутером Wi‑Fi 6 было бы быстрее") }
         if w.band == "2,4 ГГц" { hints.append("лучше подключиться к сети 5 ГГц") }
-        if let n = w.sameChannel, n >= 2 { hints.append("на канале \(w.channel) ещё \(n) \(NetEval.nets(n)) — смени канал в роутере") }
+        if let n = w.sameChannel, n >= 2 { hints.append("на канале \(w.channel) ещё \(n) \(NetEval.nets(n)) — они мешают, по возможности смени канал") }
         if !hints.isEmpty {
             let h = hints.joined(separator: "; ")
             s += " " + h.prefix(1).uppercased() + h.dropFirst() + "."
@@ -136,6 +137,8 @@ enum NetEval {
         guard let d = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let dl = (d["dl_throughput"] as? NSNumber)?.doubleValue else { return nil }
         let ul = (d["ul_throughput"] as? NSNumber)?.doubleValue ?? 0
+        // Замер провалился (связь оборвалась посреди теста) — это не «0 Мбит/с», а ошибка
+        guard dl > 0 || ul > 0 else { return nil }
         return SpeedResult(down: dl / 1_000_000, up: ul / 1_000_000,
                            rttMs: (d["base_rtt"] as? NSNumber)?.doubleValue ?? 0,
                            rpm: (d["responsiveness"] as? NSNumber)?.doubleValue ?? 0,
@@ -161,6 +164,8 @@ final class NetworkMonitor: ObservableObject {
     private var lastScanChannel: Int?
     private var sameChannel: Int?
     private var proc: Process?
+    private var cancelled = false
+    private var recentRates: [Double] = []
 
     func appear() {
         users += 1
@@ -180,6 +185,11 @@ final class NetworkMonitor: ObservableObject {
     func refreshWiFi() {
         wifi = Self.readWiFi(macAX: macAX ?? false, sameChannel: sameChannel)
         wifiOff = wifi == nil
+        if let r = wifi?.rate {
+            recentRates.append(r)
+            if recentRates.count > 5 { recentRates.removeFirst() }
+            wifi?.rate = recentRates.max() ?? r
+        } else { recentRates.removeAll() }
         if let w = wifi, lastScanChannel != nil, lastScanChannel != w.channel { scanNeighbours() }
     }
 
@@ -251,30 +261,34 @@ final class NetworkMonitor: ObservableObject {
         testing = true
         testStarted = Date()
         error = nil
-        scanNeighbours()
+        cancelled = false
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/networkQuality")
         p.arguments = ["-c", "-M", "15"]
         let pipe = Pipe()
         p.standardOutput = pipe
         p.standardError = FileHandle.nullDevice
-        p.terminationHandler = { [weak self] _ in
+        do { try p.run(); proc = p } catch {
+            testing = false
+            self.error = "Не удалось запустить networkQuality"
+            return
+        }
+        // Читаем вывод, пока процесс работает (чтобы большой вывод не застрял в трубе), потом ждём выхода
+        DispatchQueue.global(qos: .utility).async { [weak self] in
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            p.waitUntilExit()
             let r = NetEval.parse(data)
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.testing = false
                 self.proc = nil
-                if let r { self.speed = r } else { self.error = "Нет связи с сервером проверки — интернета нет?" }
+                if let r { self.speed = r }
+                else if !self.cancelled { self.error = "Нет связи с сервером проверки — интернета нет?" }
             }
-        }
-        do { try p.run(); proc = p } catch {
-            testing = false
-            self.error = "Не удалось запустить networkQuality"
         }
     }
 
-    func cancelTest() { proc?.terminate() }
+    func cancelTest() { cancelled = true; proc?.terminate() }
 
     static func run(_ path: String, _ args: [String]) -> String {
         let p = Process()
@@ -443,6 +457,7 @@ enum NetSelfTest {
         check("VPN по интерфейсу", NetEval.isTunnel("utun4") && !NetEval.isTunnel("en0"))
 
         // Разбор JSON networkQuality
+        check("пустой замер — ошибка, а не 0", NetEval.parse(Data(#"{"dl_throughput":0,"ul_throughput":0}"#.utf8)) == nil)
         let json = #"{"dl_throughput":35530000,"ul_throughput":28378000,"base_rtt":199.6,"responsiveness":73,"interface_name":"utun4"}"#
         if let r = NetEval.parse(Data(json.utf8)) {
             check("разбор JSON", abs(r.down - 35.53) < 0.01 && r.viaVPN && Int(r.rttMs) == 199)
@@ -481,6 +496,26 @@ enum NetSelfTest {
                 print("ℹ️ Замер: ↓\(Int(r.down)) ↑\(Int(r.up)) Мбит/с, задержка \(Int(r.rttMs)) мс, через \(r.iface)")
                 check("живой замер", r.down > 0)
             } else { check("живой замер", false) }
+
+            // Тот же путь, что у кнопки в чёлке: отмена и полный замер
+            let m = NetworkMonitor.shared
+            func spin(_ secs: Double, until: () -> Bool) {
+                let end = Date().addingTimeInterval(secs)
+                while Date() < end && !until() { RunLoop.main.run(until: Date().addingTimeInterval(0.2)) }
+            }
+            m.runSpeedTest()
+            spin(3) { false }
+            m.cancelTest()
+            spin(8) { !m.testing }
+            check("кнопка: отмена без ложной ошибки", !m.testing && m.error == nil && m.speed == nil)
+            m.runSpeedTest()
+            spin(30) { !m.testing }
+            if let r = m.speed {
+                print("ℹ️ Кнопка: ↓\(Int(r.down)) ↑\(Int(r.up)) Мбит/с, задержка \(Int(r.rttMs)) мс")
+            }
+            // Замер должен закончиться: либо результатом, либо понятной ошибкой (но не зависнуть и не дать «0»)
+            check("кнопка: замер завершился честно", !m.testing && ((m.speed.map { $0.down > 0 || $0.up > 0 } ?? false) || m.error != nil))
+            if let e = m.error { print("ℹ️ Кнопка: \(e)") }
         }
         print(ok ? "Итог: всё верно" : "Итог: есть ошибки")
         return ok
@@ -504,9 +539,16 @@ final class InternetWatch: ObservableObject {
         return URLSession(configuration: c)
     }()
 
+    private var graceUntil = Date.distantPast
+
     func start() {
         check()
         timer = Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { [weak self] _ in self?.check() }
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification,
+                                                          object: nil, queue: .main) { [weak self] _ in
+            self?.fails = 0
+            self?.graceUntil = Date().addingTimeInterval(45)
+        }
     }
 
     func check() {
@@ -533,8 +575,9 @@ final class InternetWatch: ObservableObject {
             fails = 0
             downSince = nil
         } else {
-            fails += 1
             pingMs = nil
+            if Date() < graceUntil { return }     // только проснулись — Wi‑Fi ещё подключается
+            fails += 1
             // Два провала подряд (~20 с) — значит, правда пропал, а не случайная потеря
             if fails == 2 {
                 online = false
