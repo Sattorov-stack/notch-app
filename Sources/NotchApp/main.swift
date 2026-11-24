@@ -347,7 +347,8 @@ if CommandLine.arguments.contains("--selftest-net") {
 }
 
 // Диагностика разрешения «Запись экрана»: NotchApp --selftest-screen
-if CommandLine.arguments.contains("--selftest-screen") {
+if CommandLine.arguments.contains("--selftest-screen") || CommandLine.arguments.contains("--request-screen") {
+    if CommandLine.arguments.contains("--request-screen") { CGRequestScreenCaptureAccess() }
     print(CGPreflightScreenCaptureAccess() ? "Запись экрана: разрешена" : "Запись экрана: НЕ разрешена")
     exit(0)
 }
