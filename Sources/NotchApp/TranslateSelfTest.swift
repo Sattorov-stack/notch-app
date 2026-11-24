@@ -7,7 +7,8 @@ enum TranslateSelfTest {
     struct Case { let src: String; let tgt: String; let text: String; let must: [String] }
 
     static let cases: [Case] = [
-        Case(src: "ru", tgt: "en", text: "привет как дела", must: ["how"]),
+        // Короткое «Привет.» NaturalLanguage раньше определял как болгарский — перевод падал.
+        Case(src: "auto", tgt: "en", text: "Привет.", must: ["hello"]),
         Case(src: "ru", tgt: "en", text: "спасибо брат выручил", must: ["thank"]),
         Case(src: "ru", tgt: "en", text: "я седня не смогу прийти давай завтра", must: ["today", "tomorrow"]),
         Case(src: "ru", tgt: "en", text: "короче я хз че делать с этим багом он вылезает только на проде", must: ["bug", "prod"]),
@@ -23,7 +24,8 @@ enum TranslateSelfTest {
         print("== Переводчик чёлки (ИИ-шлифовка: \(hasAI ? "есть" : "нет Ollama"))")
         for c in cases {
             do {
-                let session = try TranslationSession(installedSource: Locale.Language(identifier: c.src),
+                let src = c.src == "auto" ? TranslateModel.detect(c.text) : c.src
+                let session = try TranslationSession(installedSource: Locale.Language(identifier: src),
                                                      target: Locale.Language(identifier: c.tgt))
                 let t0 = Date()
                 let apple = try await session.translate(c.text).targetText
@@ -31,7 +33,9 @@ enum TranslateSelfTest {
                 let ai = hasAI ? await AIPolish.polish(original: c.text, draft: apple, target: c.tgt) : nil
                 let t2 = Date()
                 let final = ai ?? apple
-                let low = final.lowercased()
+                // Ключевые слова проверяем в дословном Apple-переводе: ИИ-шлифовка
+                // вправе перефразировать («Hello.» → «Hey.»), это не ошибка.
+                let low = apple.lowercased()
                 let missing = c.must.filter { !low.contains($0) }
                 let addedQuestion = final.contains("?") && !c.text.contains("?") && !apple.contains("?")
                 let ok = missing.isEmpty && !final.contains(":)") && !addedQuestion

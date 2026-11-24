@@ -91,7 +91,19 @@ final class TranslateModel: ObservableObject {
         if let raw = recognizer.dominantLanguage?.rawValue {
             let code = raw.lowercased()
             if code.hasPrefix("zh") { return "zh-Hans" }
-            if code.count == 2 { return code }
+            if code.count == 2 {
+                // Короткие русские фразы («Привет.») NaturalLanguage определяет как болгарский.
+                // Пары bg↔en на Маке нет, и Translation падает с «Unable to Translate».
+                // Для кириллицы языков, которых нет в системных парах, считаем русский.
+                let installed = ["ar", "da", "de", "en", "es", "fi", "fr", "he", "hi",
+                                 "id", "it", "ja", "ko", "ms", "nb", "nl", "pl", "pt",
+                                 "ru", "sv", "th", "tr", "uk", "vi", "zh"]
+                if !installed.contains(code),
+                   text.range(of: "\\p{Cyrillic}", options: .regularExpression) != nil {
+                    return "ru"
+                }
+                return code
+            }
         }
         if text.range(of: "\\p{Cyrillic}", options: .regularExpression) != nil { return "ru" }
         if text.range(of: "\\p{Han}", options: .regularExpression) != nil { return "zh-Hans" }

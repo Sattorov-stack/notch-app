@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import Combine
 import QuartzCore
+import CoreGraphics
 import Carbon.HIToolbox
 
 final class NotchPanel: NSPanel {
@@ -343,6 +344,12 @@ final class NotchController: NSObject {
 // Самопроверка проверки интернета: NotchApp --selftest-net [--live]
 if CommandLine.arguments.contains("--selftest-net") {
     exit(NetSelfTest.run() ? 0 : 1)
+}
+
+// Диагностика разрешения «Запись экрана»: NotchApp --selftest-screen
+if CommandLine.arguments.contains("--selftest-screen") {
+    print(CGPreflightScreenCaptureAccess() ? "Запись экрана: разрешена" : "Запись экрана: НЕ разрешена")
+    exit(0)
 }
 
 // Самопроверка переводчика: NotchApp --selftest-translate
